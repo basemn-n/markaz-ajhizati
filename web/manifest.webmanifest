@@ -1,0 +1,13 @@
+{
+  "name": "مركز أجهزتي",
+  "short_name": "أجهزتي",
+  "description": "المراسلة وإدارة الأجهزة المرتبطة",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fc",
+  "theme_color": "#315da8",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [{"src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}
