@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#315da8">
+  <meta name="description" content="مركز أجهزتي للمراسلة وإدارة الأجهزة المرتبطة">
+  <title>مركز أجهزتي</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brandmark">م</div>
+    <div class="brandtext"><strong>مركز أجهزتي</strong><span>المراسلة وإدارة الأجهزة</span></div>
+    <button id="installBtn" class="install hidden" type="button">تثبيت التطبيق</button>
+  </header>
+  <main class="container">
+    <section class="welcome card"><div><p class="eyebrow">مساحتك الخاصة</p><h1>كل أجهزتك في مكان واحد</h1><p class="muted">واجهة أولية قابلة للتثبيت على الهاتف والكمبيوتر. ربط الأجهزة والمراسلة الفعلية يحتاجان إلى إعداد الخادم وتأمين الحساب.</p></div><div class="welcome-icon" aria-hidden="true">⌁</div></section>
+    <nav class="tabs" aria-label="التنقل"><button class="tab active" data-tab="devices">أجهزتي</button><button class="tab" data-tab="chats">المحادثات</button><button class="tab" data-tab="settings">الإعدادات</button></nav>
+    <section id="devices" class="panel"><div class="section-heading"><div><h2>الأجهزة</h2><p class="muted">أضف أسماء أجهزتك للتجربة المحلية.</p></div><button id="addDeviceBtn" class="primary">＋ إضافة جهاز</button></div><div id="deviceList" class="device-list"></div><div class="notice">تنبيه: هذه الواجهة لا تتصل بالهواتف فعليًا بعد، ولا تتيح التحكم بالشاشة حتى تكتمل المصادقة وخدمة الجهاز المساعد.</div></section>
+    <section id="chats" class="panel hidden"><div class="section-heading"><div><h2>المحادثات</h2><p class="muted">تجربة واجهة للمراسلة.</p></div></div><div class="card chat-placeholder"><div class="chat-bubble">مرحبًا! 👋</div><p class="muted">المراسلة بين المستخدمين ستعمل بعد توصيل التطبيق بخادم آمن وحسابات موثّقة.</p><form id="chatForm" class="chat-form"><input id="chatInput" maxlength="4000" placeholder="اكتب رسالة تجريبية…" autocomplete="off"><button class="primary" type="submit">إضافة</button></form><div id="localMessages" class="local-messages"></div></div></section>
+    <section id="settings" class="panel hidden"><div class="section-heading"><div><h2>الإعدادات</h2><p class="muted">إعدادات النسخة التجريبية.</p></div></div><div class="card settings-list"><div><strong>التثبيت</strong><span>يمكن تثبيت نسخة الويب بعد نشرها عبر HTTPS.</span></div><div><strong>الأمان</strong><span>لا تدخل كلمات مرور أو رسائل خاصة في هذه النسخة التجريبية.</span></div><div><strong>الإصدار</strong><span>0.3.0 — واجهة ويب قابلة للتثبيت (PWA)</span></div></div></section>
+  </main>
+  <dialog id="addDialog"><form id="addForm" method="dialog" class="dialog-form"><h2>إضافة جهاز</h2><p class="muted">سيُحفظ الاسم على هذا المتصفح فقط في النسخة الحالية.</p><label for="deviceName">اسم الجهاز</label><input id="deviceName" required maxlength="80" placeholder="مثال: ريدمي الأساسي"><div class="dialog-actions"><button class="secondary" value="cancel">إلغاء</button><button class="primary" id="saveDeviceBtn" value="default">حفظ</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div><footer>مركز أجهزتي · نسخة تجريبية</footer>
+  <script src="./app.js"></script>
+</body>
+</html>
