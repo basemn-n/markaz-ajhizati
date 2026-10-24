@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: markaz-ajhizati-web
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: ./web
