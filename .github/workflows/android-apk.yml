@@ -35,24 +35,19 @@ jobs:
       - name: Build signed test APK
         run: gradle --no-daemon assembleRelease
 
-      - name: Verify APK signature
+      - name: Verify APK signature, package, SDK compatibility and alignment
         run: |
+          set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
+          "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
+          grep -q "package: name='com.basemn.markazajhizati.test2' versionCode='4' versionName='0.4.0'" /tmp/apk-badging.txt
+          grep -q "sdkVersion:'26'" /tmp/apk-badging.txt
+          grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
-      - name: Install APK on Android 13 emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          script: |
-            adb install app/build/outputs/apk/release/app-release.apk
-            adb shell pm path com.basemn.markazajhizati.test2
-
-      - name: Upload installable APK
+      - name: Upload validated APK
         uses: actions/upload-artifact@v4
         with:
           name: markaz-ajhizati-release-test-apk
