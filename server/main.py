@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import secrets
 import sqlite3
 import time
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 APP_DIR = Path(__file__).resolve().parent
@@ -25,6 +25,13 @@ app = FastAPI(
     title="مركز أجهزتي API",
     version="0.3.0",
     description="Authenticated starter API for account-owned devices and messages.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ.get("MARKAZ_WEB_ORIGIN", "https://markaz-ajhizati.onrender.com")],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -176,6 +183,7 @@ def health():
 
 @app.post("/api/auth/register", status_code=201)
 def register(payload: RegisterRequest):
+    auth_secret()  # Fail before writing an account if the server secret is missing.
     username = payload.username.strip()
     if len(username) < 3:
         raise HTTPException(status_code=422, detail="Username must contain at least 3 characters")
@@ -196,6 +204,7 @@ def register(payload: RegisterRequest):
 
 @app.post("/api/auth/login")
 def login(payload: LoginRequest):
+    auth_secret()  # Fail before authentication work if the server secret is missing.
     with connect() as db:
         user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE",
                           (payload.username.strip(),)).fetchone()
