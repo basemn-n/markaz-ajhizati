@@ -7,6 +7,9 @@ import json
 import os
 import secrets
 import sqlite3
+
+import psycopg
+from psycopg.rows import dict_row
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,12 +22,16 @@ from pydantic import BaseModel, Field
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("MARKAZ_DB_PATH", str(APP_DIR / "markaz.db")))
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+IS_POSTGRES = bool(DATABASE_URL)
+if os.environ.get("RENDER") and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required on Render so user data is stored persistently.")
 TOKEN_TTL_SECONDS = 60 * 60 * 12
 PASSWORD_ITERATIONS = 310_000
 
 app = FastAPI(
     title="مركز أجهزتي API",
-    version="0.3.0",
+    version="0.4.0",
     description="Authenticated starter API for account-owned devices and messages.",
 )
 app.add_middleware(
@@ -36,12 +43,43 @@ app.add_middleware(
 )
 
 
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+class DatabaseConnection:
+    """Small compatibility layer so the same API queries work with SQLite and PostgreSQL."""
+    def __init__(self):
+        if IS_POSTGRES:
+            url = DATABASE_URL
+            if url.startswith("postgres://"):
+                url = "postgresql://" + url[len("postgres://"):]
+            self.connection = psycopg.connect(url, row_factory=dict_row, connect_timeout=15)
+        else:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.connection = sqlite3.connect(DB_PATH, timeout=10)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys = ON")
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self.connection.__exit__(exc_type, exc, tb)
+
+    def execute(self, sql, params=()):
+        if IS_POSTGRES:
+            sql = sql.replace(" COLLATE NOCASE", "").replace("?", "%s")
+        return self.connection.execute(sql, params)
+
+    def executescript(self, sql):
+        if IS_POSTGRES:
+            for statement in sql.split(";"):
+                if statement.strip():
+                    self.connection.execute(statement)
+        else:
+            self.connection.executescript(sql)
+
+
+def connect() -> DatabaseConnection:
+    return DatabaseConnection()
 
 
 def now() -> str:
@@ -49,8 +87,36 @@ def now() -> str:
 
 
 def init_db() -> None:
-    with connect() as db:
-        db.executescript("""
+    if IS_POSTGRES:
+        schema = """
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_ci ON users (lower(username));
+        CREATE TABLE IF NOT EXISTS devices (
+            id BIGSERIAL PRIMARY KEY,
+            owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            device_name TEXT NOT NULL,
+            device_type TEXT NOT NULL DEFAULT 'android',
+            paired INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(owner_id, id DESC);
+        CREATE TABLE IF NOT EXISTS messages (
+            id BIGSERIAL PRIMARY KEY,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, id);
+        """
+    else:
+        schema = """
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -74,9 +140,10 @@ def init_db() -> None:
             body TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_messages_pair
-            ON messages(sender_id, recipient_id, id);
-        """)
+        CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, id);
+        """
+    with connect() as db:
+        db.executescript(schema)
 init_db()
 
 
@@ -182,7 +249,7 @@ CurrentUser = Annotated[dict, Depends(current_user)]
 def root():
     return {
         "app": "مركز أجهزتي",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "status": "authenticated-starter",
         "note": "Use HTTPS, configure MARKAZ_AUTH_SECRET, and configure persistent storage before production use.",
     }
@@ -203,11 +270,11 @@ def register(payload: RegisterRequest):
     try:
         with connect() as db:
             cur = db.execute(
-                "INSERT INTO users(username, password_salt, password_hash, created_at) VALUES(?,?,?,?)",
+                "INSERT INTO users(username, password_salt, password_hash, created_at) VALUES(?,?,?,?) RETURNING id",
                 (username, salt, password_hash, now()),
             )
-            user_id = cur.lastrowid
-    except sqlite3.IntegrityError:
+            user_id = cur.fetchone()["id"]
+    except (sqlite3.IntegrityError, psycopg.errors.UniqueViolation):
         raise HTTPException(status_code=409, detail="Username is already registered")
     token = issue_token(user_id, username)
     return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_SECONDS,
@@ -218,7 +285,7 @@ def register(payload: RegisterRequest):
 def login(payload: LoginRequest):
     auth_secret()  # Fail before authentication work if the server secret is missing.
     with connect() as db:
-        user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE",
+        user = db.execute("SELECT * FROM users WHERE lower(username)=lower(?)",
                           (payload.username.strip(),)).fetchone()
     if not user or not password_matches(payload.password, user["password_salt"], user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
@@ -276,12 +343,13 @@ def list_devices(user: CurrentUser):
 def create_device(payload: DeviceCreate, user: CurrentUser):
     with connect() as db:
         cur = db.execute(
-            "INSERT INTO devices(owner_id, device_name, device_type, paired, created_at) VALUES(?,?,?,0,?)",
+            "INSERT INTO devices(owner_id, device_name, device_type, paired, created_at) VALUES(?,?,?,0,?) RETURNING id",
             (user["id"], payload.device_name.strip(), payload.device_type.strip(), now()),
         )
+        inserted_id = cur.fetchone()["id"]
         row = db.execute(
             "SELECT id, device_name, device_type, paired, created_at FROM devices WHERE id=? AND owner_id=?",
-            (cur.lastrowid, user["id"]),
+            (inserted_id, user["id"]),
         ).fetchone()
     return dict(row)
 
@@ -305,14 +373,15 @@ def send_message(payload: MessageCreate, user: CurrentUser):
         if recipient["id"] == user["id"]:
             raise HTTPException(status_code=422, detail="Cannot send a message to the same account")
         cur = db.execute(
-            "INSERT INTO messages(sender_id, recipient_id, body, created_at) VALUES(?,?,?,?)",
+            "INSERT INTO messages(sender_id, recipient_id, body, created_at) VALUES(?,?,?,?) RETURNING id",
             (user["id"], recipient["id"], payload.body.strip(), now()),
         )
+        inserted_id = cur.fetchone()["id"]
         row = db.execute(
             """SELECT m.id, s.username AS sender, r.username AS recipient, m.body, m.created_at
                FROM messages m JOIN users s ON s.id=m.sender_id
                JOIN users r ON r.id=m.recipient_id WHERE m.id=?""",
-            (cur.lastrowid,),
+            (inserted_id,),
         ).fetchone()
     return dict(row)
 
