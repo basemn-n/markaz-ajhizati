@@ -7,8 +7,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
@@ -425,24 +423,22 @@ private fun MarkazApp(activity: MainActivity) {
                     if (devices.isEmpty()) {
                         Text("لا توجد أجهزة مسجلة بعد.")
                     } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(devices, key = { it.id }) { device ->
-                                Card(shape = RoundedCornerShape(16.dp)) {
-                                    Row(
-                                        Modifier.fillMaxWidth().padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.Devices, contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary)
-                                        Spacer(Modifier.width(12.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(device.name, fontWeight = FontWeight.SemiBold)
-                                            Text(device.type, fontSize = 12.sp)
-                                        }
-                                        Text(if (device.paired) "مرتبط" else "غير مربوط",
-                                            color = if (device.paired) Color(0xFF23834A) else Color.Gray,
-                                            fontSize = 12.sp)
+                        devices.forEach { device ->
+                            Card(shape = RoundedCornerShape(16.dp)) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Devices, contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(device.name, fontWeight = FontWeight.SemiBold)
+                                        Text(device.type, fontSize = 12.sp)
                                     }
+                                    Text(if (device.paired) "مرتبط" else "غير مربوط",
+                                        color = if (device.paired) Color(0xFF23834A) else Color.Gray,
+                                        fontSize = 12.sp)
                                 }
                             }
                         }
