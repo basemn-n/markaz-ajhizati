@@ -1,52 +1,260 @@
-const starterDevices = [
-  {name:"سامسونج", detail:"Galaxy · غير مربوط"},
-  {name:"ريدمي", detail:"Redmi · غير مربوط"},
-  {name:"جلاكسي آخر", detail:"Galaxy · غير مربوط"},
-  {name:"إلنترا", detail:"الموديل غير محدد · غير مربوط"}
-];
-const list = document.querySelector("#deviceList");
-const dialog = document.querySelector("#addDialog");
-const form = document.querySelector("#addForm");
-const nameInput = document.querySelector("#deviceName");
+const API_BASE = "https://markaz-ajhizati-api.onrender.com";
+const authPanel = document.querySelector("#authPanel");
+const appPanel = document.querySelector("#appPanel");
+const authForm = document.querySelector("#authForm");
+const authTitle = document.querySelector("#authTitle");
+const authSubmit = document.querySelector("#authSubmit");
+const authNotice = document.querySelector("#authNotice");
+const usernameInput = document.querySelector("#username");
+const passwordInput = document.querySelector("#password");
+const logoutBtn = document.querySelector("#logoutBtn");
 const toast = document.querySelector("#toast");
-let devices = [];
-try { devices = JSON.parse(localStorage.getItem("markaz-devices") || "null") || starterDevices; }
-catch { devices = starterDevices; }
-function notify(message) { toast.textContent = message; toast.classList.add("show"); window.setTimeout(() => toast.classList.remove("show"), 2600); }
-function save() { localStorage.setItem("markaz-devices", JSON.stringify(devices)); renderDevices(); }
-function renderDevices() {
+let authMode = "login";
+let token = sessionStorage.getItem("markaz-token") || "";
+let currentUser = null;
+
+function notify(message) {
+  toast.textContent = message;
+  toast.classList.add("show");
+  window.setTimeout(() => toast.classList.remove("show"), 3000);
+}
+function showAuthNotice(message) {
+  authNotice.textContent = message;
+  authNotice.classList.remove("hidden");
+}
+function clearAuthNotice() {
+  authNotice.textContent = "";
+  authNotice.classList.add("hidden");
+}
+function setAuthMode(mode) {
+  authMode = mode;
+  const registering = mode === "register";
+  authTitle.textContent = registering ? "إنشاء حساب جديد" : "تسجيل الدخول";
+  authSubmit.textContent = registering ? "إنشاء الحساب" : "تسجيل الدخول";
+  passwordInput.autocomplete = registering ? "new-password" : "current-password";
+  passwordInput.minLength = registering ? 10 : 1;
+  document.querySelector("#loginModeBtn").classList.toggle("active", !registering);
+  document.querySelector("#registerModeBtn").classList.toggle("active", registering);
+  clearAuthNotice();
+}
+async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (token) headers.Authorization = "Bearer " + token;
+  const response = await fetch(API_BASE + path, { ...options, headers });
+  let data = {};
+  try { data = await response.json(); } catch {}
+  if (!response.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : "تعذّر إكمال الطلب";
+    throw new Error(detail);
+  }
+  return data;
+}
+function showSignedIn(user) {
+  currentUser = user;
+  authPanel.classList.add("hidden");
+  appPanel.classList.remove("hidden");
+  logoutBtn.classList.remove("hidden");
+  document.querySelector("#currentUsername").textContent = user.username;
+  refreshAll();
+}
+function showSignedOut() {
+  token = "";
+  currentUser = null;
+  sessionStorage.removeItem("markaz-token");
+  authPanel.classList.remove("hidden");
+  appPanel.classList.add("hidden");
+  logoutBtn.classList.add("hidden");
+}
+authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAuthNotice();
+  const username = usernameInput.value.trim();
+  const password = passwordInput.value;
+  authSubmit.disabled = true;
+  try {
+    const path = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const data = await api(path, { method: "POST", body: JSON.stringify({ username, password }) });
+    token = data.access_token;
+    sessionStorage.setItem("markaz-token", token);
+    passwordInput.value = "";
+    showSignedIn(data.user);
+    notify(authMode === "register" ? "تم إنشاء الحساب وتسجيل الدخول." : "تم تسجيل الدخول.");
+  } catch (error) {
+    showAuthNotice(error.message + (error.message.includes("Server authentication") ? " — يلزم ضبط إعدادات الخادم." : ""));
+  } finally {
+    authSubmit.disabled = false;
+  }
+});
+document.querySelector("#loginModeBtn").addEventListener("click", () => setAuthMode("login"));
+document.querySelector("#registerModeBtn").addEventListener("click", () => setAuthMode("register"));
+logoutBtn.addEventListener("click", () => { showSignedOut(); notify("تم تسجيل الخروج."); });
+
+async function refreshAll() {
+  await Promise.allSettled([refreshLinks(), refreshIncoming()]);
+}
+function emptyMessage(container, message) {
+  const p = document.createElement("p");
+  p.className = "muted";
+  p.textContent = message;
+  container.append(p);
+}
+function statusArabic(status) {
+  return ({pending:"بانتظار موافقة صاحب الهاتف", approved:"تمت الموافقة على الربط", rejected:"تم رفض الطلب", revoked:"تم إلغاء الربط"})[status] || status;
+}
+function renderLinkList(items) {
+  const list = document.querySelector("#linkList");
   list.replaceChildren();
-  devices.forEach((device) => {
-    const card = document.createElement("article"); card.className = "device";
-    const icon = document.createElement("div"); icon.className = "device-icon"; icon.textContent = "▣";
-    const info = document.createElement("div"); info.className = "device-info";
-    const title = document.createElement("strong"); title.textContent = device.name;
-    const detail = document.createElement("span"); detail.textContent = device.detail;
-    const status = document.createElement("span"); status.className = "status"; status.textContent = "● غير متصل";
-    info.append(title, detail, status); card.append(icon, info);
-    card.addEventListener("click", () => notify("هذا الجهاز محفوظ محليًا فقط؛ الربط الحقيقي سيُضاف في مرحلة الخادم.")); list.append(card);
+  if (!items.length) return emptyMessage(list, "لا توجد أجهزة مرتبطة حتى الآن.");
+  items.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "device";
+    const icon = document.createElement("div");
+    icon.className = "device-icon";
+    icon.textContent = "▣";
+    const info = document.createElement("div");
+    info.className = "device-info";
+    const title = document.createElement("strong");
+    title.textContent = item.target_username || "جهاز مرتبط";
+    const status = document.createElement("span");
+    status.textContent = statusArabic(item.status);
+    info.append(title, status);
+    card.append(icon, info);
+    if (item.status === "approved") {
+      const revoke = document.createElement("button");
+      revoke.className = "secondary";
+      revoke.type = "button";
+      revoke.textContent = "إلغاء";
+      revoke.addEventListener("click", async () => {
+        if (!window.confirm("هل تريد إلغاء الربط؟")) return;
+        try {
+          await api("/api/pairings/" + item.id + "/revoke", { method: "POST" });
+          notify("تم إلغاء الربط.");
+          refreshAll();
+        } catch (error) { notify(error.message); }
+      });
+      card.append(revoke);
+    }
+    list.append(card);
   });
 }
-renderDevices();
-document.querySelector("#addDeviceBtn").addEventListener("click", () => { nameInput.value = ""; dialog.showModal(); nameInput.focus(); });
-form.addEventListener("submit", (event) => {
-  if (event.submitter && event.submitter.value === "cancel") return;
-  event.preventDefault(); const name = nameInput.value.trim(); if (!name) return;
-  devices.push({name, detail:"أُضيف على هذا المتصفح · غير مربوط"}); save(); dialog.close(); notify("تم حفظ اسم الجهاز على هذا المتصفح.");
+async function refreshLinks() {
+  const list = document.querySelector("#linkList");
+  try {
+    const items = await api("/api/pairings");
+    renderLinkList(items);
+  } catch (error) {
+    list.replaceChildren();
+    emptyMessage(list, error.message);
+  }
+}
+async function refreshIncoming() {
+  const list = document.querySelector("#incomingList");
+  try {
+    const items = await api("/api/pairings/incoming");
+    list.replaceChildren();
+    if (!items.length) return emptyMessage(list, "لا توجد طلبات ربط تنتظر موافقتك.");
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "device";
+      const icon = document.createElement("div");
+      icon.className = "device-icon";
+      icon.textContent = "↔";
+      const info = document.createElement("div");
+      info.className = "device-info";
+      const title = document.createElement("strong");
+      title.textContent = item.controller_username;
+      const status = document.createElement("span");
+      status.textContent = "يريد ربط حسابه بجهازك";
+      info.append(title, status);
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "6px";
+      const approve = document.createElement("button");
+      approve.className = "primary";
+      approve.type = "button";
+      approve.textContent = "موافقة";
+      const reject = document.createElement("button");
+      reject.className = "secondary";
+      reject.type = "button";
+      reject.textContent = "رفض";
+      async function decide(approved) {
+        approve.disabled = true;
+        reject.disabled = true;
+        try {
+          await api("/api/pairings/" + item.id + "/decision", {method:"POST", body:JSON.stringify({approved})});
+          notify(approved ? "وافقت على طلب الربط." : "تم رفض طلب الربط.");
+          await refreshAll();
+        } catch (error) {
+          notify(error.message);
+          approve.disabled = false;
+          reject.disabled = false;
+        }
+      }
+      approve.addEventListener("click", () => decide(true));
+      reject.addEventListener("click", () => decide(false));
+      actions.append(approve, reject);
+      card.append(icon, info, actions);
+      list.append(card);
+    });
+  } catch (error) {
+    list.replaceChildren();
+    emptyMessage(list, error.message);
+  }
+}
+document.querySelector("#createCodeBtn").addEventListener("click", async () => {
+  const result = document.querySelector("#pairCodeResult");
+  result.classList.remove("hidden");
+  result.textContent = "جارٍ إنشاء الرمز…";
+  try {
+    const data = await api("/api/pairing-codes", {method:"POST"});
+    result.textContent = "رمز الربط: " + data.pairing_code + " — صالح حتى " + new Date(data.expires_at).toLocaleTimeString("ar", {hour:"2-digit", minute:"2-digit"}) + ". شاركه مع الحساب الذي تريد السماح له بطلب الربط.";
+  } catch (error) {
+    result.textContent = error.message;
+  }
 });
-document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => {
-  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === button));
+document.querySelector("#pairForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.querySelector("#pairCodeInput");
+  try {
+    const data = await api("/api/pairings", {method:"POST", body:JSON.stringify({code:input.value.trim()})});
+    input.value = "";
+    notify(data.message || "تم إرسال طلب الربط.");
+    await refreshLinks();
+  } catch (error) { notify(error.message); }
+});
+document.querySelector("#refreshLinksBtn").addEventListener("click", refreshLinks);
+document.querySelector("#refreshRequestsBtn").addEventListener("click", refreshIncoming);
+document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll(".tab[data-tab]").forEach((b) => b.classList.toggle("active", b === button));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
 }));
-document.querySelector("#chatForm").addEventListener("submit", (event) => {
-  event.preventDefault(); const input = document.querySelector("#chatInput"); const text = input.value.trim(); if (!text) return;
-  const item = document.createElement("div"); item.className = "local-message"; item.textContent = text;
-  document.querySelector("#localMessages").append(item); input.value = ""; notify("رسالة تجريبية محلية فقط؛ لم تُرسل إلى مستخدم آخر.");
+let installPrompt = null;
+const installBtn = document.querySelector("#installBtn");
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+  installBtn.classList.remove("hidden");
 });
-let installPrompt = null; const installBtn = document.querySelector("#installBtn");
-window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); installPrompt = event; installBtn.classList.remove("hidden"); });
 installBtn.addEventListener("click", async () => {
-  if (!installPrompt) { notify("من قائمة المتصفح اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»."); return; }
-  installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; installBtn.classList.add("hidden");
+  if (!installPrompt) {
+    notify("من قائمة المتصفح اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».");
+    return;
+  }
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  installBtn.classList.add("hidden");
 });
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+async function start() {
+  if (!token) return;
+  try {
+    const user = await api("/api/auth/me");
+    showSignedIn(user);
+  } catch {
+    showSignedOut();
+  }
+}
+start();
