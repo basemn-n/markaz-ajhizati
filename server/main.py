@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -149,10 +150,15 @@ def password_matches(password: str, salt_text: str, hash_text: str) -> bool:
     return hmac.compare_digest(candidate, hash_text)
 
 
-def current_user(authorization: Annotated[str | None, Header()] = None) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> dict:
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Bearer access token required")
-    payload = verify_token(authorization[7:].strip())
+    payload = verify_token(credentials.credentials.strip())
     with connect() as db:
         user = db.execute(
             "SELECT id, username, created_at FROM users WHERE id=?",
