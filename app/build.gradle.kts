@@ -8,11 +8,12 @@ android {
     namespace = "com.example.markaz"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.basemn.markazajhizati.test2"
+        // Unique package avoids a signature/package conflict with earlier test builds.
+        applicationId = "com.basemn.markazajhizati.installfix"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
