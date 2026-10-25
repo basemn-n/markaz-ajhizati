@@ -76,9 +76,11 @@ function showSignedIn(user) {
   appPanel.classList.remove("hidden");
   logoutBtn.classList.remove("hidden");
   document.querySelector("#currentUsername").textContent = user.username;
+  startPresenceHeartbeat();
   refreshAll();
 }
 function showSignedOut() {
+  stopPresenceHeartbeat();
   token = "";
   currentUser = null;
   sessionStorage.removeItem("markaz-token");
@@ -113,6 +115,27 @@ document.querySelector("#loginModeBtn").addEventListener("click", () => setAuthM
 document.querySelector("#registerModeBtn").addEventListener("click", () => setAuthMode("register"));
 logoutBtn.addEventListener("click", () => { showSignedOut(); notify("تم تسجيل الخروج."); });
 
+let presenceTimer = null;
+let presenceInFlight = false;
+async function sendPresenceHeartbeat() {
+  if (!token || document.visibilityState === "hidden" || presenceInFlight) return;
+  presenceInFlight = true;
+  try { await api("/api/presence/heartbeat", { method: "POST" }); }
+  catch { /* A missed heartbeat is reflected as inactive after 90 seconds. */ }
+  finally { presenceInFlight = false; }
+}
+function startPresenceHeartbeat() {
+  stopPresenceHeartbeat();
+  sendPresenceHeartbeat();
+  presenceTimer = window.setInterval(sendPresenceHeartbeat, 30000);
+}
+function stopPresenceHeartbeat() {
+  if (presenceTimer !== null) window.clearInterval(presenceTimer);
+  presenceTimer = null;
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && token) sendPresenceHeartbeat();
+});
 async function refreshAll() {
   await Promise.allSettled([refreshLinks(), refreshIncoming()]);
 }
@@ -142,6 +165,14 @@ function renderLinkList(items) {
     const status = document.createElement("span");
     status.textContent = statusArabic(item.status);
     info.append(title, status);
+    if (item.status === "approved") {
+      const presence = document.createElement("span");
+      presence.className = "presence-status " + (item.session_status === "active" ? "is-active" : "is-inactive");
+      presence.textContent = item.session_status === "active"
+        ? "جلسة التطبيق نشطة الآن"
+        : (item.last_seen_at ? "آخر نشاط للتطبيق: " + new Date(item.last_seen_at).toLocaleString("ar") : "لم يسجل التطبيق نشاطًا بعد");
+      info.append(presence);
+    }
     card.append(icon, info);
     if (item.status === "approved") {
       const revoke = document.createElement("button");
