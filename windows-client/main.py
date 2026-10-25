@@ -4,12 +4,13 @@ This client manages authenticated account links only; it does NOT stream or cont
 Requires Python 3.10+ on Windows. Run: py main.py
 """
 import json
+import os
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-API = "https://markaz-ajhizati-api.onrender.com"
+API = os.environ.get("MARKAZ_API_URL", "https://markaz-ajhizati-api.onrender.com").rstrip("/")
 
 
 class Client(tk.Tk):
@@ -61,7 +62,10 @@ class Client(tk.Tk):
         ttk.Label(form, text="كلمة المرور").grid(row=1, column=0, sticky="e", padx=8, pady=8)
         self.password = ttk.Entry(form, width=32, show="•")
         self.password.grid(row=1, column=1, pady=8)
-        ttk.Button(box, text="دخول", command=lambda: self.guarded(self.login)).pack(pady=10)
+        buttons = ttk.Frame(box)
+        buttons.pack(pady=10)
+        ttk.Button(buttons, text="دخول", command=lambda: self.guarded(self.login)).pack(side="right", padx=6)
+        ttk.Button(buttons, text="إنشاء حساب جديد", command=lambda: self.guarded(self.register)).pack(side="right", padx=6)
         ttk.Label(box, text="هذا الإصدار يدير الربط فقط؛ مشاركة الشاشة والتحكم غير متاحين بعد.",
                   foreground="#a33").pack(pady=14)
 
@@ -71,6 +75,19 @@ class Client(tk.Tk):
             "password": self.password.get()
         })
         self.token = result["access_token"]
+        self._build_dashboard()
+
+    def register(self):
+        username = self.username.get().strip()
+        password = self.password.get()
+        if len(password) < 10:
+            raise RuntimeError("كلمة المرور يجب أن تكون 10 أحرف على الأقل.")
+        result = self.call("POST", "/api/auth/register", {
+            "username": username,
+            "password": password
+        })
+        self.token = result["access_token"]
+        messagebox.showinfo("تم إنشاء الحساب", "تم إنشاء الحساب وتسجيل الدخول. استخدم الحساب نفسه داخل تطبيق الهاتف.")
         self._build_dashboard()
 
     def _build_dashboard(self):
