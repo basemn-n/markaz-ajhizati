@@ -90,6 +90,12 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class PasswordRecoveryRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    recovery_key: str = Field(min_length=32, max_length=256)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
 class DeviceCreate(BaseModel):
     device_name: str = Field(min_length=1, max_length=80)
     device_type: str = Field(default="android", min_length=1, max_length=40)
@@ -219,6 +225,36 @@ def login(payload: LoginRequest):
     token = issue_token(user["id"], user["username"])
     return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_SECONDS,
             "user": {"id": user["id"], "username": user["username"]}}
+
+
+@app.post("/api/auth/recover-password")
+def recover_password(payload: PasswordRecoveryRequest):
+    configured_key = os.environ.get("MARKAZ_RECOVERY_KEY", "")
+    if len(configured_key) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Password recovery is not configured. Set MARKAZ_RECOVERY_KEY to a random secret of at least 32 characters.",
+        )
+    if not hmac.compare_digest(payload.recovery_key, configured_key):
+        raise HTTPException(status_code=403, detail="Invalid recovery key")
+
+    username = payload.username.strip()
+    salt, password_hash = hash_password(payload.new_password)
+    with connect() as db:
+        user = db.execute(
+            "SELECT id FROM users WHERE username=? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="Account not found in this database. Register a new account or check persistent storage.",
+            )
+        db.execute(
+            "UPDATE users SET password_salt=?, password_hash=? WHERE id=?",
+            (salt, password_hash, user["id"]),
+        )
+    return {"ok": True, "message": "Password updated. Sign in with the new password."}
 
 
 @app.get("/api/auth/me")
