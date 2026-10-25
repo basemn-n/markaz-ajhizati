@@ -11,6 +11,7 @@ permissions:
 jobs:
   android-release-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -51,8 +52,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
+          target: google_apis
           arch: x86_64
           profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: false
           script: |
             adb install app/build/outputs/apk/release/app-release.apk
             adb shell am start -n com.basemn.markazajhizati.installfix/com.example.markaz.MainActivity
