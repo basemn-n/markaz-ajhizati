@@ -44,7 +44,28 @@ async function api(path, options = {}) {
   let data = {};
   try { data = await response.json(); } catch {}
   if (!response.ok) {
-    const detail = typeof data.detail === "string" ? data.detail : "تعذّر إكمال الطلب";
+    const raw = data.detail;
+    let detail = "تعذّر إكمال الطلب. حاول مرة أخرى.";
+    if (typeof raw === "string") {
+      const known = {
+        "Username is already registered": "اسم المستخدم مسجّل من قبل. اختر اسمًا آخر.",
+        "Incorrect username or password": "اسم المستخدم أو كلمة المرور غير صحيحة.",
+        "Server authentication is not configured. Set MARKAZ_AUTH_SECRET to a random secret of at least 32 characters.": "إعدادات أمان الخادم غير مكتملة؛ يلزم ضبط MARKAZ_AUTH_SECRET في Render.",
+        "Bearer access token required": "انتهت الجلسة أو لم يتم تسجيل الدخول. سجّل الدخول مجددًا."
+      };
+      detail = known[raw] || raw;
+    } else if (Array.isArray(raw)) {
+      const errors = raw.map((item) => {
+        const field = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : "";
+        if (field === "username" && item.type === "string_pattern_mismatch") return "اسم المستخدم يجب أن يكون بالإنجليزية، ويقبل الحروف والأرقام و . _ - فقط.";
+        if (field === "username" && item.type === "string_too_short") return "اسم المستخدم يجب أن يتكوّن من 3 أحرف على الأقل.";
+        if (field === "username" && item.type === "string_too_long") return "اسم المستخدم طويل جدًا؛ الحد الأقصى 32 حرفًا.";
+        if (field === "password" && item.type === "string_too_short") return "كلمة المرور يجب أن تتكوّن من 10 أحرف على الأقل.";
+        if (field === "password" && item.type === "string_too_long") return "كلمة المرور طويلة جدًا؛ الحد الأقصى 128 حرفًا.";
+        return "";
+      }).filter(Boolean);
+      if (errors.length) detail = [...new Set(errors)].join(" ");
+    }
     throw new Error(detail);
   }
   return data;
@@ -80,7 +101,10 @@ authForm.addEventListener("submit", async (event) => {
     showSignedIn(data.user);
     notify(authMode === "register" ? "تم إنشاء الحساب وتسجيل الدخول." : "تم تسجيل الدخول.");
   } catch (error) {
-    showAuthNotice(error.message + (error.message.includes("Server authentication") ? " — يلزم ضبط إعدادات الخادم." : ""));
+    const message = error instanceof TypeError
+      ? "تعذّر الاتصال بالخادم. انتظر قليلًا ثم أعد المحاولة؛ إذا استمرت المشكلة فسنفحص خدمة API على Render."
+      : error.message;
+    showAuthNotice(message);
   } finally {
     authSubmit.disabled = false;
   }
