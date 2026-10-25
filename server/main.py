@@ -11,7 +11,7 @@ import sqlite3
 import psycopg
 from psycopg.rows import dict_row
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -114,6 +114,28 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, id);
+        CREATE TABLE IF NOT EXISTS pairing_codes (
+            id BIGSERIAL PRIMARY KEY,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            code_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pairing_codes_target ON pairing_codes(target_id, id DESC);
+        CREATE TABLE IF NOT EXISTS device_links (
+            id BIGSERIAL PRIMARY KEY,
+            controller_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            approved_at TEXT,
+            UNIQUE(controller_id, target_id),
+            CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+            CHECK (controller_id <> target_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
         """
     else:
         schema = """
@@ -141,6 +163,27 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, id);
+        CREATE TABLE IF NOT EXISTS pairing_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            code_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pairing_codes_target ON pairing_codes(target_id, id DESC);
+        CREATE TABLE IF NOT EXISTS device_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            controller_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+            created_at TEXT NOT NULL,
+            approved_at TEXT,
+            UNIQUE(controller_id, target_id),
+            CHECK (controller_id <> target_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
         """
     with connect() as db:
         db.executescript(schema)
@@ -407,3 +450,137 @@ def get_messages(
             (user["id"], other["id"], other["id"], user["id"], limit),
         ).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+class PairingCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
+
+@app.post("/api/pairing-codes")
+def create_pairing_code(user: CurrentUser):
+    """Create a short-lived code on the phone that will be managed."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    created = datetime.now(timezone.utc)
+    expires = created + timedelta(minutes=10)
+    code_hash = hashlib.sha256(code.encode("ascii")).hexdigest()
+    with connect() as db:
+        db.execute(
+            "UPDATE pairing_codes SET used_at=? WHERE target_id=? AND used_at IS NULL",
+            (created.isoformat(), user["id"]),
+        )
+        db.execute(
+            "INSERT INTO pairing_codes(target_id, code_hash, expires_at, used_at, created_at) VALUES(?,?,?,?,?)",
+            (user["id"], code_hash, expires.isoformat(), None, created.isoformat()),
+        )
+    return {
+        "pairing_code": code,
+        "expires_at": expires.isoformat(),
+        "message": "Share this code with the person you want to authorize. They must request access, and you must approve it.",
+    }
+
+
+@app.post("/api/pairings", status_code=201)
+def request_pairing(payload: PairingCodeRequest, user: CurrentUser):
+    """Request access using a code displayed by the target user; does not grant access."""
+    now_text = now()
+    code_hash = hashlib.sha256(payload.code.encode("ascii")).hexdigest()
+    with connect() as db:
+        code_row = db.execute(
+            "SELECT id, target_id FROM pairing_codes WHERE code_hash=? AND used_at IS NULL AND expires_at>?",
+            (code_hash, now_text),
+        ).fetchone()
+        if not code_row:
+            raise HTTPException(status_code=400, detail="Pairing code is invalid or expired")
+        target_id = code_row["target_id"]
+        if int(target_id) == int(user["id"]):
+            raise HTTPException(status_code=422, detail="You cannot pair an account with itself")
+        existing = db.execute(
+            "SELECT id, status FROM device_links WHERE controller_id=? AND target_id=?",
+            (user["id"], target_id),
+        ).fetchone()
+        if existing and existing["status"] in ("pending", "approved"):
+            raise HTTPException(status_code=409, detail="A pairing request or approved link already exists")
+        if existing:
+            db.execute(
+                "UPDATE device_links SET status='pending', created_at=?, approved_at=NULL WHERE id=?",
+                (now_text, existing["id"]),
+            )
+            link_id = existing["id"]
+        else:
+            cur = db.execute(
+                "INSERT INTO device_links(controller_id, target_id, status, created_at) VALUES(?,?, 'pending', ?) RETURNING id",
+                (user["id"], target_id, now_text),
+            )
+            link_id = cur.fetchone()["id"]
+        db.execute("UPDATE pairing_codes SET used_at=? WHERE id=?", (now_text, code_row["id"]))
+    return {"id": link_id, "status": "pending", "message": "Request sent. The target user must approve it."}
+
+
+@app.get("/api/pairings/incoming")
+def incoming_pairings(user: CurrentUser):
+    """List pending access requests for the signed-in target account."""
+    with connect() as db:
+        rows = db.execute(
+            """SELECT l.id, l.status, l.created_at, u.username AS controller_username
+               FROM device_links l JOIN users u ON u.id=l.controller_id
+               WHERE l.target_id=? AND l.status='pending'
+               ORDER BY l.id DESC""",
+            (user["id"],),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+class PairingDecision(BaseModel):
+    approved: bool
+
+
+@app.post("/api/pairings/{pairing_id}/decision")
+def decide_pairing(pairing_id: int, payload: PairingDecision, user: CurrentUser):
+    """Only the target account can approve or reject a request."""
+    with connect() as db:
+        row = db.execute(
+            "SELECT id, status FROM device_links WHERE id=? AND target_id=?",
+            (pairing_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pairing request not found")
+        if row["status"] != "pending":
+            raise HTTPException(status_code=409, detail="Pairing request is no longer pending")
+        status = "approved" if payload.approved else "rejected"
+        approved_at = now() if payload.approved else None
+        db.execute(
+            "UPDATE device_links SET status=?, approved_at=? WHERE id=? AND target_id=?",
+            (status, approved_at, pairing_id, user["id"]),
+        )
+    return {"id": pairing_id, "status": status}
+
+
+@app.get("/api/pairings")
+def list_pairings(user: CurrentUser):
+    """List devices that this account has been explicitly authorized to manage."""
+    with connect() as db:
+        rows = db.execute(
+            """SELECT l.id, l.status, l.created_at, l.approved_at,
+                      u.id AS target_user_id, u.username AS target_username
+               FROM device_links l JOIN users u ON u.id=l.target_id
+               WHERE l.controller_id=?
+               ORDER BY l.id DESC""",
+            (user["id"],),
+        ).fetchall()
+    return [dict(row) for row in rows if row["status"] != "rejected"]
+
+
+@app.post("/api/pairings/{pairing_id}/revoke")
+def revoke_pairing(pairing_id: int, user: CurrentUser):
+    """Allow either side to revoke a previously approved link."""
+    with connect() as db:
+        row = db.execute(
+            "SELECT id, controller_id, target_id, status FROM device_links WHERE id=? AND (controller_id=? OR target_id=?)",
+            (pairing_id, user["id"], user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pairing link not found")
+        if row["status"] != "approved":
+            raise HTTPException(status_code=409, detail="Only an approved link can be revoked")
+        db.execute("UPDATE device_links SET status='revoked' WHERE id=?", (pairing_id,))
+    return {"id": pairing_id, "status": "revoked"}
