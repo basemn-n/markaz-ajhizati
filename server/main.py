@@ -136,6 +136,10 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
         CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS user_presence (
+            user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            last_seen_at TEXT NOT NULL
+        );
         """
     else:
         schema = """
@@ -184,6 +188,10 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
         CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS user_presence (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            last_seen_at TEXT NOT NULL
+        );
         """
     with connect() as db:
         db.executescript(schema)
@@ -555,19 +563,52 @@ def decide_pairing(pairing_id: int, payload: PairingDecision, user: CurrentUser)
     return {"id": pairing_id, "status": status}
 
 
+@app.post("/api/presence/heartbeat")
+def presence_heartbeat(user: CurrentUser):
+    """Record that this account's web/PWA session is currently active."""
+    seen_at = now()
+    with connect() as db:
+        existing = db.execute("SELECT user_id FROM user_presence WHERE user_id=?", (user["id"],)).fetchone()
+        if existing:
+            db.execute("UPDATE user_presence SET last_seen_at=? WHERE user_id=?", (seen_at, user["id"]))
+        else:
+            db.execute("INSERT INTO user_presence(user_id, last_seen_at) VALUES(?,?)", (user["id"], seen_at))
+    return {"ok": True, "last_seen_at": seen_at}
+
+
 @app.get("/api/pairings")
 def list_pairings(user: CurrentUser):
     """List devices that this account has been explicitly authorized to manage."""
     with connect() as db:
         rows = db.execute(
             """SELECT l.id, l.status, l.created_at, l.approved_at,
-                      u.id AS target_user_id, u.username AS target_username
+                      u.id AS target_user_id, u.username AS target_username,
+                      p.last_seen_at AS last_seen_at
                FROM device_links l JOIN users u ON u.id=l.target_id
+               LEFT JOIN user_presence p ON p.user_id=l.target_id
                WHERE l.controller_id=?
                ORDER BY l.id DESC""",
             (user["id"],),
         ).fetchall()
-    return [dict(row) for row in rows if row["status"] != "rejected"]
+    result = []
+    current_time = datetime.now(timezone.utc)
+    for row in rows:
+        item = dict(row)
+        if item["status"] == "rejected":
+            continue
+        seen = item.get("last_seen_at")
+        is_online = False
+        if seen:
+            try:
+                seen_dt = datetime.fromisoformat(str(seen).replace("Z", "+00:00"))
+                if seen_dt.tzinfo is None:
+                    seen_dt = seen_dt.replace(tzinfo=timezone.utc)
+                is_online = (current_time - seen_dt).total_seconds() <= 90
+            except (TypeError, ValueError):
+                is_online = False
+        item["session_status"] = "active" if is_online else "inactive"
+        result.append(item)
+    return result
 
 
 @app.post("/api/pairings/{pairing_id}/revoke")
