@@ -309,7 +309,7 @@ def recover_password(payload: PasswordRecoveryRequest):
     salt, password_hash = hash_password(payload.new_password)
     with connect() as db:
         user = db.execute(
-            "SELECT id FROM users WHERE username=? COLLATE NOCASE",
+            "SELECT id FROM users WHERE lower(username)=lower(?)",
             (username,),
         ).fetchone()
         if not user:
@@ -366,7 +366,7 @@ def delete_device(device_id: int, user: CurrentUser):
 def send_message(payload: MessageCreate, user: CurrentUser):
     recipient_username = payload.recipient_username.strip()
     with connect() as db:
-        recipient = db.execute("SELECT id FROM users WHERE username=? COLLATE NOCASE",
+        recipient = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)",
                                (recipient_username,)).fetchone()
         if not recipient:
             raise HTTPException(status_code=404, detail="Recipient account not found")
