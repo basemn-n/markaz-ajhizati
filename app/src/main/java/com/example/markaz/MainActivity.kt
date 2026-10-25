@@ -5,6 +5,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +39,12 @@ private data class DeviceItem(
     val name: String,
     val type: String,
     val paired: Boolean
+)
+
+private data class PairItem(
+    val id: Long,
+    val username: String,
+    val status: String
 )
 
 private data class ApiResult(
@@ -99,6 +107,10 @@ private fun MarkazApp(activity: MainActivity) {
     var token by remember { mutableStateOf<String?>(null) }
     var signedInUsername by remember { mutableStateOf("") }
     var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
+    var incoming by remember { mutableStateOf<List<PairItem>>(emptyList()) }
+    var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }
+    var pairingCode by remember { mutableStateOf("") }
+    var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("سجّل الدخول لربط تطبيق أندرويد بحسابك.") }
 
@@ -159,6 +171,128 @@ private fun MarkazApp(activity: MainActivity) {
         }
     }
 
+    fun refreshPairings(authToken: String) {
+        network.execute {
+            try {
+                val inResult = requestApi("GET", "/api/pairings/incoming", authToken)
+                val outResult = requestApi("GET", "/api/pairings", authToken)
+                if (inResult.status !in 200..299) throw IllegalStateException(errorMessage(inResult))
+                if (outResult.status !in 200..299) throw IllegalStateException(errorMessage(outResult))
+                val newIncoming = buildList {
+                    val array = JSONArray(inResult.body)
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        add(PairItem(item.optLong("id"), item.optString("controller_username", "حساب"), item.optString("status", "pending")))
+                    }
+                }
+                val newOutgoing = buildList {
+                    val array = JSONArray(outResult.body)
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        add(PairItem(item.optLong("id"), item.optString("target_username", "حساب"), item.optString("status", "pending")))
+                    }
+                }
+                activity.runOnUiThread {
+                    incoming = newIncoming
+                    outgoing = newOutgoing
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread { notice = e.message ?: "تعذر تحديث طلبات الربط." }
+            }
+        }
+    }
+
+    fun generatePairingCode() {
+        val authToken = token ?: return
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/pairing-codes", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                val code = JSONObject(result.body).optString("pairing_code")
+                activity.runOnUiThread {
+                    pairingCode = code
+                    notice = "شارك الرمز مع الحساب الذي تريد السماح له بطلب الربط. صلاحية الرمز 10 دقائق."
+                    busy = false
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر إنشاء رمز الربط."
+                    busy = false
+                }
+            }
+        }
+    }
+
+    fun submitPairingCode() {
+        val authToken = token ?: return
+        val cleanCode = codeInput.filter { it.isDigit() }
+        if (cleanCode.length != 6) {
+            notice = "أدخل رمز الربط المكوّن من 6 أرقام."
+            return
+        }
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/pairings", authToken, JSONObject().put("code", cleanCode))
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                activity.runOnUiThread {
+                    codeInput = ""
+                    notice = "أُرسل طلب الربط. لن يتم الربط إلا بعد موافقة صاحب الحساب الآخر."
+                    busy = false
+                    refreshPairings(authToken)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر إرسال طلب الربط."
+                    busy = false
+                }
+            }
+        }
+    }
+
+    fun decidePairing(item: PairItem, approved: Boolean) {
+        val authToken = token ?: return
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/pairings/${item.id}/decision", authToken, JSONObject().put("approved", approved))
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                activity.runOnUiThread {
+                    notice = if (approved) "وافقت على طلب الربط. هذا لا يتيح الشاشة أو الملفات تلقائيًا." else "تم رفض طلب الربط."
+                    busy = false
+                    refreshPairings(authToken)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر تحديث قرار الربط."
+                    busy = false
+                }
+            }
+        }
+    }
+
+    fun revokePairing(item: PairItem) {
+        val authToken = token ?: return
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/pairings/${item.id}/revoke", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                activity.runOnUiThread {
+                    notice = "تم إلغاء الربط."
+                    busy = false
+                    refreshPairings(authToken)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر إلغاء الربط."
+                    busy = false
+                }
+            }
+        }
+    }
+
     fun authenticate() {
         val cleanUsername = username.trim()
         if (cleanUsername.length < 3) {
@@ -187,6 +321,7 @@ private fun MarkazApp(activity: MainActivity) {
                     password = ""
                     notice = "تم تسجيل الدخول. جارٍ تسجيل الهاتف..."
                     loadDevices(authToken, true)
+                    refreshPairings(authToken)
                 }
             } catch (e: Exception) {
                 activity.runOnUiThread {
@@ -257,7 +392,7 @@ private fun MarkazApp(activity: MainActivity) {
                 }
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Spacer(Modifier.height(4.dp))
@@ -308,6 +443,67 @@ private fun MarkazApp(activity: MainActivity) {
                                             color = if (device.paired) Color(0xFF23834A) else Color.Gray,
                                             fontSize = 12.sp)
                                     }
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+                    Text("ربط الحسابات", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    Text("الربط يحتاج موافقة صاحب الحساب الآخر. لا يفعّل التحكم بالجهاز أو الوصول إلى الشاشة والملفات.",
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { generatePairingCode() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("إنشاء رمز لاستقبال طلب ربط")
+                    }
+                    if (pairingCode.isNotBlank()) {
+                        Card(shape = RoundedCornerShape(14.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("رمز الربط المؤقت", fontWeight = FontWeight.SemiBold)
+                                Text(pairingCode, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text("صالح لمدة 10 دقائق، واستخدمه فقط مع الشخص المقصود.", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = codeInput,
+                        onValueChange = { value -> codeInput = value.filter { it.isDigit() }.take(6) },
+                        label = { Text("رمز ربط حساب آخر") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedButton(onClick = { submitPairingCode() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("إرسال طلب الربط")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("طلبات الموافقة الواردة", fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { token?.let { refreshPairings(it) } }, enabled = !busy) { Text("تحديث") }
+                    }
+                    if (incoming.isEmpty()) Text("لا توجد طلبات موافقة معلّقة.", fontSize = 13.sp)
+                    incoming.forEach { item ->
+                        Card(shape = RoundedCornerShape(14.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("الحساب ${item.username} يطلب الربط", fontWeight = FontWeight.SemiBold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { decidePairing(item, true) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("موافقة") }
+                                    OutlinedButton(onClick = { decidePairing(item, false) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("رفض") }
+                                }
+                            }
+                        }
+                    }
+                    Text("الحسابات المرتبطة", fontWeight = FontWeight.Bold)
+                    if (outgoing.isEmpty()) Text("لا توجد روابط صادرة من هذا الحساب.", fontSize = 13.sp)
+                    outgoing.forEach { item ->
+                        Card(shape = RoundedCornerShape(14.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(item.username, fontWeight = FontWeight.SemiBold)
+                                Text(when (item.status) {
+                                    "approved" -> "تمت الموافقة على الربط"
+                                    "pending" -> "بانتظار موافقة صاحب الحساب"
+                                    "revoked" -> "تم إلغاء الربط"
+                                    else -> item.status
+                                }, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (item.status == "approved") {
+                                    OutlinedButton(onClick = { revokePairing(item) }, enabled = !busy) { Text("إلغاء الربط") }
                                 }
                             }
                         }
