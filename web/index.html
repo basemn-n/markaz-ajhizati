@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#315da8">
-  <meta name="description" content="مركز أجهزتي للمراسلة وإدارة الأجهزة المرتبطة">
+  <meta name="description" content="مركز أجهزتي للمراسلة وربط الأجهزة بموافقة أصحابها">
   <title>مركز أجهزتي</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
@@ -13,18 +13,77 @@
 <body>
   <header class="topbar">
     <div class="brandmark">م</div>
-    <div class="brandtext"><strong>مركز أجهزتي</strong><span>المراسلة وإدارة الأجهزة</span></div>
+    <div class="brandtext"><strong>مركز أجهزتي</strong><span>المراسلة وربط الأجهزة</span></div>
+    <button id="logoutBtn" class="secondary hidden" type="button">تسجيل الخروج</button>
     <button id="installBtn" class="install hidden" type="button">تثبيت التطبيق</button>
   </header>
-  <main class="container">
-    <section class="welcome card"><div><p class="eyebrow">مساحتك الخاصة</p><h1>كل أجهزتك في مكان واحد</h1><p class="muted">واجهة أولية قابلة للتثبيت على الهاتف والكمبيوتر. ربط الأجهزة والمراسلة الفعلية يحتاجان إلى إعداد الخادم وتأمين الحساب.</p></div><div class="welcome-icon" aria-hidden="true">⌁</div></section>
-    <nav class="tabs" aria-label="التنقل"><button class="tab active" data-tab="devices">أجهزتي</button><button class="tab" data-tab="chats">المحادثات</button><button class="tab" data-tab="settings">الإعدادات</button></nav>
-    <section id="devices" class="panel"><div class="section-heading"><div><h2>الأجهزة</h2><p class="muted">أضف أسماء أجهزتك للتجربة المحلية.</p></div><button id="addDeviceBtn" class="primary">＋ إضافة جهاز</button></div><div id="deviceList" class="device-list"></div><div class="notice">تنبيه: هذه الواجهة لا تتصل بالهواتف فعليًا بعد، ولا تتيح التحكم بالشاشة حتى تكتمل المصادقة وخدمة الجهاز المساعد.</div></section>
-    <section id="chats" class="panel hidden"><div class="section-heading"><div><h2>المحادثات</h2><p class="muted">تجربة واجهة للمراسلة.</p></div></div><div class="card chat-placeholder"><div class="chat-bubble">مرحبًا! 👋</div><p class="muted">المراسلة بين المستخدمين ستعمل بعد توصيل التطبيق بخادم آمن وحسابات موثّقة.</p><form id="chatForm" class="chat-form"><input id="chatInput" maxlength="4000" placeholder="اكتب رسالة تجريبية…" autocomplete="off"><button class="primary" type="submit">إضافة</button></form><div id="localMessages" class="local-messages"></div></div></section>
-    <section id="settings" class="panel hidden"><div class="section-heading"><div><h2>الإعدادات</h2><p class="muted">إعدادات النسخة التجريبية.</p></div></div><div class="card settings-list"><div><strong>التثبيت</strong><span>يمكن تثبيت نسخة الويب بعد نشرها عبر HTTPS.</span></div><div><strong>الأمان</strong><span>لا تدخل كلمات مرور أو رسائل خاصة في هذه النسخة التجريبية.</span></div><div><strong>الإصدار</strong><span>0.3.0 — واجهة ويب قابلة للتثبيت (PWA)</span></div></div></section>
+
+  <main id="authPanel" class="container">
+    <section class="card">
+      <p class="eyebrow">حسابك الآمن</p>
+      <h1 id="authTitle">تسجيل الدخول</h1>
+      <p class="muted">أنشئ حسابًا أو سجّل الدخول لإدارة طلبات ربط الأجهزة.</p>
+      <div class="tabs">
+        <button id="loginModeBtn" class="tab active" type="button">تسجيل الدخول</button>
+        <button id="registerModeBtn" class="tab" type="button">حساب جديد</button>
+      </div>
+      <form id="authForm" class="dialog-form" style="padding:0">
+        <label for="username">اسم المستخدم</label>
+        <input id="username" name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="username" placeholder="مثال: user_01">
+        <label for="password">كلمة المرور</label>
+        <input id="password" name="password" type="password" required minlength="10" maxlength="128" autocomplete="current-password" placeholder="10 أحرف على الأقل">
+        <button id="authSubmit" class="primary" type="submit">تسجيل الدخول</button>
+      </form>
+      <div id="authNotice" class="notice hidden" role="status"></div>
+    </section>
   </main>
-  <dialog id="addDialog"><form id="addForm" method="dialog" class="dialog-form"><h2>إضافة جهاز</h2><p class="muted">سيُحفظ الاسم على هذا المتصفح فقط في النسخة الحالية.</p><label for="deviceName">اسم الجهاز</label><input id="deviceName" required maxlength="80" placeholder="مثال: ريدمي الأساسي"><div class="dialog-actions"><button class="secondary" value="cancel">إلغاء</button><button class="primary" id="saveDeviceBtn" value="default">حفظ</button></div></form></dialog>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div><footer>مركز أجهزتي · نسخة تجريبية</footer>
+
+  <main id="appPanel" class="container hidden">
+    <section class="welcome card">
+      <div><p class="eyebrow">مساحتك الخاصة</p><h1>مرحبًا، <span id="currentUsername"></span></h1><p class="muted">اربط جهازًا بعد موافقة صاحبه، ويمكن لأي طرف إلغاء الربط لاحقًا.</p></div>
+      <div class="welcome-icon" aria-hidden="true">⌁</div>
+    </section>
+    <nav class="tabs" aria-label="التنقل">
+      <button class="tab active" data-tab="devices" type="button">ربط جهاز</button>
+      <button class="tab" data-tab="requests" type="button">طلبات الموافقة</button>
+      <button class="tab" data-tab="chats" type="button">المحادثات</button>
+    </nav>
+
+    <section id="devices" class="panel">
+      <div class="section-heading"><div><h2>ربط جهاز جديد</h2><p class="muted">على الهاتف المراد ربطه، سجّل الدخول وأنشئ رمز الربط. الرمز صالح لمدة 10 دقائق ويُستخدم مرة واحدة.</p></div></div>
+      <div class="card">
+        <h3>إذا كان هذا هو الهاتف المراد إدارته</h3>
+        <p class="muted">أنشئ رمزًا ثم شاركه مع الحساب الذي تريد السماح له بطلب الربط.</p>
+        <button id="createCodeBtn" class="primary" type="button">إنشاء رمز ربط</button>
+        <div id="pairCodeResult" class="notice hidden" aria-live="polite"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>إذا كنت تريد ربط هاتف آخر بحسابك</h3>
+        <p class="muted">أدخل الرمز الذي يعرضه صاحب الهاتف. لن يتم الربط إلا بعد موافقته.</p>
+        <form id="pairForm" class="chat-form">
+          <input id="pairCodeInput" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="رمز الربط المكوّن من 6 أرقام">
+          <button class="primary" type="submit">إرسال طلب</button>
+        </form>
+      </div>
+      <div class="section-heading"><div><h2>الأجهزة المرتبطة بحسابك</h2><p class="muted">تظهر هنا طلباتك وحالات الربط.</p></div><button id="refreshLinksBtn" class="secondary" type="button">تحديث</button></div>
+      <div id="linkList" class="device-list"></div>
+      <div class="notice">هذه المرحلة تنفّذ الحسابات وطلبات الربط فقط. مشاهدة الشاشة والتحكم ونقل الملفات لم تُفعّل بعد.</div>
+    </section>
+
+    <section id="requests" class="panel hidden">
+      <div class="section-heading"><div><h2>طلبات الوصول الواردة</h2><p class="muted">راجع اسم الحساب ووافق فقط إذا كنت تريد ربطه بهاتفك.</p></div><button id="refreshRequestsBtn" class="secondary" type="button">تحديث</button></div>
+      <div id="incomingList" class="device-list"></div>
+      <div class="notice">الموافقة تنشئ رابطًا بين الحسابين فقط؛ لا تمنح تلقائيًا وصولًا إلى الملفات أو الشاشة.</div>
+    </section>
+
+    <section id="chats" class="panel hidden">
+      <div class="section-heading"><div><h2>المحادثات</h2><p class="muted">واجهة الرسائل ستُوصل في المرحلة التالية.</p></div></div>
+      <div class="card"><p class="muted">المراسلة الفعلية غير مفعّلة في هذه المرحلة، لذلك لن نعرض رسائل تجريبية على أنها رسائل حقيقية.</p></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <footer>مركز أجهزتي · نسخة قيد التطوير</footer>
   <script src="./app.js"></script>
 </body>
 </html>
