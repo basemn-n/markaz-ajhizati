@@ -121,7 +121,12 @@ async function sendPresenceHeartbeat() {
   if (!token || document.visibilityState === "hidden" || presenceInFlight) return;
   presenceInFlight = true;
   try { await api("/api/presence/heartbeat", { method: "POST" }); }
-  catch { /* A missed heartbeat is reflected as inactive after 90 seconds. */ }
+  catch (error) {
+    if (!window.__presenceErrorShown) {
+      window.__presenceErrorShown = true;
+      notify("تعذّر تسجيل نشاط التطبيق: " + (error instanceof TypeError ? "تعذّر الاتصال بالخادم أو منع المتصفح الاتصال به." : error.message));
+    }
+  }
   finally { presenceInFlight = false; }
 }
 function startPresenceHeartbeat() {
