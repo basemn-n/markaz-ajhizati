@@ -1,63 +1,200 @@
 package com.example.markaz
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Devices
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
 
-private enum class Tab { CHATS, DEVICES, SETTINGS }
+private const val API_BASE = "https://markaz-ajhizati-api.onrender.com"
+private val network = Executors.newSingleThreadExecutor()
 
 private data class DeviceItem(
+    val id: Long,
     val name: String,
-    val model: String,
-    val status: String,
-    val online: Boolean
+    val type: String,
+    val paired: Boolean
 )
+
+private data class ApiResult(
+    val status: Int,
+    val body: String
+)
+
+private fun requestApi(
+    method: String,
+    path: String,
+    token: String? = null,
+    body: JSONObject? = null
+): ApiResult {
+    val connection = (URL(API_BASE + path).openConnection() as HttpURLConnection)
+    try {
+        connection.requestMethod = method
+        connection.connectTimeout = 20000
+        connection.readTimeout = 20000
+        connection.setRequestProperty("Accept", "application/json")
+        if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+        if (body != null) {
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+        }
+        val status = connection.responseCode
+        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+        return ApiResult(status, response)
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun errorMessage(result: ApiResult): String {
+    return try {
+        val json = JSONObject(result.body)
+        when (val detail = json.opt("detail")) {
+            is String -> detail
+            else -> "تعذر إكمال الطلب (HTTP ${result.status})."
+        }
+    } catch (_: Exception) {
+        "تعذر الاتصال بالخادم. تحقق من الإنترنت ثم حاول مجددًا."
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MarkazApp() }
+        setContent { MarkazApp(this) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MarkazApp() {
-    var selectedTab by remember { mutableStateOf(Tab.DEVICES) }
-    var showAddDialog by remember { mutableStateOf(false) }
-    var newDeviceName by remember { mutableStateOf("") }
-    var notice by remember { mutableStateOf("مرحبًا بك في مركز أجهزتي") }
+private fun MarkazApp(activity: MainActivity) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var registerMode by remember { mutableStateOf(false) }
+    var token by remember { mutableStateOf<String?>(null) }
+    var signedInUsername by remember { mutableStateOf("") }
+    var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
+    var busy by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf("سجّل الدخول لربط تطبيق أندرويد بحسابك.") }
 
-    val devices = remember {
-        mutableStateListOf(
-            DeviceItem("سامسونج", "Galaxy — أضف الموديل لاحقًا", "غير مربوط بعد", false),
-            DeviceItem("ريدمي", "Redmi — أضف الموديل لاحقًا", "غير مربوط بعد", false),
-            DeviceItem("جلاكسي آخر", "Galaxy — أضف الموديل لاحقًا", "غير مربوط بعد", false),
-            DeviceItem("إلنترا", "الموديل غير محدد", "غير مربوط بعد", false)
-        )
+    val deviceName = remember {
+        val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
+        val model = Build.MODEL.orEmpty()
+        listOf(manufacturer, model).filter { it.isNotBlank() }.distinct().joinToString(" ").take(80)
+            .ifBlank { "جهاز أندرويد" }
+    }
+
+    fun loadDevices(authToken: String, createIfMissing: Boolean) {
+        busy = true
+        network.execute {
+            try {
+                var result = requestApi("GET", "/api/devices", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                var array = JSONArray(result.body)
+                var found = false
+                for (i in 0 until array.length()) {
+                    if (array.getJSONObject(i).optString("device_name") == deviceName) found = true
+                }
+                if (createIfMissing && !found) {
+                    val body = JSONObject()
+                        .put("device_name", deviceName)
+                        .put("device_type", "android")
+                    result = requestApi("POST", "/api/devices", authToken, body)
+                    if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                    result = requestApi("GET", "/api/devices", authToken)
+                    if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                    array = JSONArray(result.body)
+                }
+                val parsed = buildList {
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        add(DeviceItem(
+                            id = item.optLong("id"),
+                            name = item.optString("device_name", "جهاز"),
+                            type = item.optString("device_type", "android"),
+                            paired = item.optInt("paired", 0) == 1
+                        ))
+                    }
+                }
+                activity.runOnUiThread {
+                    devices = parsed
+                    notice = if (createIfMissing) {
+                        "تم الاتصال بالخادم وتسجيل هذا الهاتف ضمن حسابك."
+                    } else {
+                        "تم تحديث قائمة الأجهزة."
+                    }
+                    busy = false
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر تحميل الأجهزة."
+                    busy = false
+                }
+            }
+        }
+    }
+
+    fun authenticate() {
+        val cleanUsername = username.trim()
+        if (cleanUsername.length < 3) {
+            notice = "اسم المستخدم يجب أن يكون 3 أحرف على الأقل."
+            return
+        }
+        if (password.length < if (registerMode) 10 else 1) {
+            notice = if (registerMode) "كلمة المرور عند إنشاء الحساب يجب أن تكون 10 أحرف على الأقل."
+            else "أدخل كلمة المرور."
+            return
+        }
+        busy = true
+        notice = "جارٍ الاتصال بالخادم..."
+        network.execute {
+            try {
+                val payload = JSONObject().put("username", cleanUsername).put("password", password)
+                val route = if (registerMode) "/api/auth/register" else "/api/auth/login"
+                val result = requestApi("POST", route, body = payload)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                val response = JSONObject(result.body)
+                val authToken = response.getString("access_token")
+                val accountName = response.getJSONObject("user").optString("username", cleanUsername)
+                activity.runOnUiThread {
+                    token = authToken
+                    signedInUsername = accountName
+                    password = ""
+                    notice = "تم تسجيل الدخول. جارٍ تسجيل الهاتف..."
+                    loadDevices(authToken, true)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر تسجيل الدخول."
+                    busy = false
+                }
+            }
+        }
     }
 
     MaterialTheme(
@@ -71,196 +208,113 @@ private fun MarkazApp() {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("مركز أجهزتي", fontWeight = FontWeight.Bold)
-                            Text("المراسلة وإدارة الأجهزة", fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                TopAppBar(title = {
+                    Column {
+                        Text("مركز أجهزتي", fontWeight = FontWeight.Bold)
+                        Text("تطبيق أندرويد المتصل", fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                )
-            },
-            bottomBar = {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = selectedTab == Tab.CHATS,
-                        onClick = { selectedTab = Tab.CHATS },
-                        icon = { Icon(Icons.Default.Chat, contentDescription = null) },
-                        label = { Text("المحادثات") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == Tab.DEVICES,
-                        onClick = { selectedTab = Tab.DEVICES },
-                        icon = { Icon(Icons.Default.Devices, contentDescription = null) },
-                        label = { Text("أجهزتي") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == Tab.SETTINGS,
-                        onClick = { selectedTab = Tab.SETTINGS },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                        label = { Text("الإعدادات") }
-                    )
-                }
-            },
-            floatingActionButton = {
-                if (selectedTab == Tab.DEVICES || selectedTab == Tab.CHATS) {
-                    FloatingActionButton(onClick = {
-                        if (selectedTab == Tab.DEVICES) showAddDialog = true
-                        else notice = "المراسلة ستُفعّل بعد ربط خادم الرسائل."
-                    }) {
-                        Icon(Icons.Default.Add, contentDescription = "إضافة")
-                    }
-                }
+                })
             }
         ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp)
-            ) {
-                when (selectedTab) {
-                    Tab.DEVICES -> DevicesScreen(devices, onDeviceClick = {
-                        notice = "هذا الجهاز نموذج أولي. يلزم ربطه وتأكيد الصلاحيات قبل الاتصال."
-                    })
-                    Tab.CHATS -> ChatsScreen(onOpen = { notice = it })
-                    Tab.SETTINGS -> SettingsScreen()
+            if (token == null) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding).padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.height(12.dp))
+                    Icon(Icons.Default.Lock, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    Text(if (registerMode) "إنشاء حساب" else "تسجيل الدخول",
+                        fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text("استخدم نفس حساب مركز أجهزتي الموجود على الموقع.", color = Color.DarkGray)
+                    OutlinedTextField(
+                        value = username, onValueChange = { username = it },
+                        label = { Text("اسم المستخدم") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password, onValueChange = { password = it },
+                        label = { Text("كلمة المرور") }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = { authenticate() },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (busy) "يرجى الانتظار..." else if (registerMode) "إنشاء الحساب" else "دخول")
+                    }
+                    TextButton(onClick = {
+                        registerMode = !registerMode
+                        notice = if (registerMode) "أنشئ حسابًا جديدًا أو ارجع لتسجيل الدخول." else "أدخل بيانات حسابك الحالي."
+                    }) {
+                        Text(if (registerMode) "لدي حساب بالفعل — تسجيل الدخول" else "ليس لديك حساب؟ إنشاء حساب")
+                    }
+                    Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 }
-                if (notice.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Spacer(Modifier.height(4.dp))
+                    Card(shape = RoundedCornerShape(18.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("مرحبًا، $signedInUsername", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text("هذا الهاتف: $deviceName")
+                            Text("سُجّل الهاتف في حسابك. هذا لا يمنح أي حساب آخر وصولًا إلى الشاشة أو الملفات.",
+                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { token?.let { loadDevices(it, false) } }, enabled = !busy) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("تحديث")
+                                }
+                                OutlinedButton(onClick = {
+                                    token = null
+                                    signedInUsername = ""
+                                    devices = emptyList()
+                                    notice = "تم تسجيل الخروج من التطبيق."
+                                }, enabled = !busy) {
+                                    Icon(Icons.Default.Logout, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("خروج")
+                                }
+                            }
+                        }
+                    }
+                    Text("الأجهزة المسجلة في الحساب", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    if (devices.isEmpty()) {
+                        Text("لا توجد أجهزة مسجلة بعد.")
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(devices, key = { it.id }) { device ->
+                                Card(shape = RoundedCornerShape(16.dp)) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Devices, contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(device.name, fontWeight = FontWeight.SemiBold)
+                                            Text(device.type, fontSize = 12.sp)
+                                        }
+                                        Text(if (device.paired) "مرتبط" else "غير مربوط",
+                                            color = if (device.paired) Color(0xFF23834A) else Color.Gray,
+                                            fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
-        }
-
-        if (showAddDialog) {
-            AlertDialog(
-                onDismissRequest = { showAddDialog = false },
-                title = { Text("إضافة جهاز") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("في النسخة المتصلة، ستتم إضافة الجهاز عبر رمز ربط يظهر على الجهاز الآخر.")
-                        OutlinedTextField(
-                            value = newDeviceName,
-                            onValueChange = { newDeviceName = it },
-                            label = { Text("اسم الجهاز") },
-                            singleLine = true
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        val name = newDeviceName.trim()
-                        if (name.isNotEmpty()) {
-                            devices.add(DeviceItem(name, "بانتظار إعداد الربط", "غير مربوط بعد", false))
-                            newDeviceName = ""
-                            showAddDialog = false
-                            notice = "أُضيف الاسم محليًا فقط. الربط الحقيقي يحتاج خادمًا وتأكيدًا على الجهاز."
-                        }
-                    }) { Text("إضافة") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showAddDialog = false }) { Text("إلغاء") }
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun DevicesScreen(
-    devices: List<DeviceItem>,
-    onDeviceClick: (DeviceItem) -> Unit
-) {
-    Spacer(Modifier.height(10.dp))
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column {
-                Text("أجهزتك في مكان واحد", fontWeight = FontWeight.Bold)
-                Text("اربط كل جهاز بموافقة واضحة مرة واحدة.", fontSize = 13.sp)
-            }
-        }
-    }
-    Spacer(Modifier.height(18.dp))
-    Text("الأجهزة", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(devices) { device ->
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { onDeviceClick(device) },
-                shape = RoundedCornerShape(18.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier.size(48.dp).background(
-                            MaterialTheme.colorScheme.secondaryContainer, CircleShape
-                        ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.PhoneAndroid, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(device.name, fontWeight = FontWeight.SemiBold)
-                        Text(device.model, fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(device.status, fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(Icons.Default.Wifi, contentDescription = "حالة الاتصال",
-                        tint = if (device.online) Color(0xFF23834A) else Color.Gray)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChatsScreen(onOpen: (String) -> Unit) {
-    Spacer(Modifier.height(18.dp))
-    Text("المحادثات", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
-    Card(shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Default.Chat, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Text("المراسلة جاهزة للتصميم", fontWeight = FontWeight.SemiBold)
-            Text("هذه نسخة واجهة أولية. إرسال الرسائل بين المستخدمين يحتاج إلى خادم وحسابات وتخزين آمن.")
-            Button(onClick = { onOpen("سيتم تفعيل المحادثات بعد إعداد الخادم.") }) {
-                Text("تفاصيل المرحلة التالية")
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsScreen() {
-    Spacer(Modifier.height(18.dp))
-    Text("الإعدادات", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
-    Card(shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("الحساب", fontWeight = FontWeight.SemiBold)
-            Text("سيُضاف تسجيل الدخول والتحقق من الأجهزة في مرحلة الخادم.")
-            HorizontalDivider()
-            Text("الخصوصية والأمان", fontWeight = FontWeight.SemiBold)
-            Text("سيحتاج كل جهاز إلى موافقة وصلاحيات واضحة. يمكن إلغاء الربط من إعدادات الحساب.")
-            HorizontalDivider()
-            Text("الإصدار التجريبي 0.1.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
