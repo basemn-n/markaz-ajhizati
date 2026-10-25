@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.markaz"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -22,6 +22,14 @@ android {
         jvmTarget = "17"
     }
     buildFeatures { compose = true }
+
+    // Test distribution only. Use a private, persistent release keystore before public production release.
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+        }
+    }
 }
 
 dependencies {
