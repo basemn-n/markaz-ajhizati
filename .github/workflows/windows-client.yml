@@ -1,0 +1,35 @@
+name: Build Windows client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'windows-client/**'
+      - '.github/workflows/windows-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install packager
+        run: python -m pip install --upgrade pyinstaller
+      - name: Build Windows executable
+        working-directory: windows-client
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MarkazAjhizati main.py
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: markaz-ajhizati-windows-test
+          path: windows-client/dist/MarkazAjhizati.exe
+          if-no-files-found: error
+          retention-days: 14
