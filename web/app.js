@@ -395,6 +395,25 @@ document.querySelector("#screenRequestForm").addEventListener("submit", async ev
 });
 document.querySelector("#refreshScreenBtn").addEventListener("click", refreshScreenAll);
 
+// Keep incoming screen-share requests visible on the target account without requiring a manual refresh.
+let screenAutoRefreshTimer = null;
+function startScreenAutoRefresh() {
+  if (screenAutoRefreshTimer !== null) window.clearInterval(screenAutoRefreshTimer);
+  screenAutoRefreshTimer = window.setInterval(() => {
+    if (currentUser && !document.hidden) {
+      const panel = document.querySelector("#screen");
+      if (panel && !panel.classList.contains("hidden")) refreshScreenSessions();
+    }
+  }, 5000);
+}
+startScreenAutoRefresh();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentUser) {
+    const panel = document.querySelector("#screen");
+    if (panel && !panel.classList.contains("hidden")) refreshScreenAll();
+  }
+});
+
 document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll(".tab[data-tab]").forEach((b) => b.classList.toggle("active", b === button));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
