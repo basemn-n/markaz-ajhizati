@@ -578,24 +578,35 @@ def presence_heartbeat(user: CurrentUser):
 
 @app.get("/api/pairings")
 def list_pairings(user: CurrentUser):
-    """List devices that this account has been explicitly authorized to manage."""
+    """List each link involving this account from either side, with a consistent status."""
     with connect() as db:
         rows = db.execute(
             """SELECT l.id, l.status, l.created_at, l.approved_at,
-                      u.id AS target_user_id, u.username AS target_username,
+                      CASE WHEN l.controller_id=? THEN target.id ELSE controller.id END AS target_user_id,
+                      CASE WHEN l.controller_id=? THEN target.username ELSE controller.username END AS target_username,
                       p.last_seen_at AS last_seen_at
-               FROM device_links l JOIN users u ON u.id=l.target_id
-               LEFT JOIN user_presence p ON p.user_id=l.target_id
-               WHERE l.controller_id=?
+               FROM device_links l
+               JOIN users controller ON controller.id=l.controller_id
+               JOIN users target ON target.id=l.target_id
+               LEFT JOIN user_presence p
+                 ON p.user_id = CASE WHEN l.controller_id=? THEN l.target_id ELSE l.controller_id END
+               WHERE l.controller_id=? OR l.target_id=?
                ORDER BY l.id DESC""",
-            (user["id"],),
+            (user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     result = []
     current_time = datetime.now(timezone.utc)
+    seen_pairs = set()
     for row in rows:
         item = dict(row)
         if item["status"] == "rejected":
             continue
+        # If an old revoked row and a newer approved row exist for the same two users,
+        # show only the newest link for this account pair.
+        pair_key = (min(user["id"], item["target_user_id"]), max(user["id"], item["target_user_id"]))
+        if pair_key in seen_pairs:
+            continue
+        seen_pairs.add(pair_key)
         seen = item.get("last_seen_at")
         is_online = False
         if seen:
