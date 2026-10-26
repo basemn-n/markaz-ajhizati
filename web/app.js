@@ -333,7 +333,7 @@ async function refreshScreenSessions() {
       const info = document.createElement("div");
       info.className = "device-info";
       const title = document.createElement("strong");
-      title.textContent = "مشاركة شاشة مع: " + (item.controller_id === currentUser?.id ? (item.target_username || "حساب مرتبط") : (item.controller_username || "حساب مرتبط"));
+      title.textContent = "مشاركة شاشة مع: " + (Number(item.controller_id) === Number(currentUser?.id) ? (item.target_username || "حساب مرتبط") : (item.controller_username || "حساب مرتبط"));
       const status = document.createElement("span");
       status.textContent = screenStatusArabic(item.status);
       info.append(title, status);
