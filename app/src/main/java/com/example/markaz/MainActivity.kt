@@ -45,6 +45,15 @@ private data class PairItem(
     val status: String
 )
 
+private data class ScreenSessionItem(
+    val id: Long,
+    val controllerId: Long,
+    val targetId: Long,
+    val controllerUsername: String,
+    val targetUsername: String,
+    val status: String
+)
+
 private data class ApiResult(
     val status: Int,
     val body: String
@@ -106,7 +115,7 @@ private fun MarkazApp(activity: MainActivity) {
     var signedInUsername by remember { mutableStateOf("") }
     var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
     var incoming by remember { mutableStateOf<List<PairItem>>(emptyList()) }
-    var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }
+    var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }\n    var screenSessions by remember { mutableStateOf<List<ScreenSessionItem>>(emptyList()) }
     var pairingCode by remember { mutableStateOf("") }
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -196,6 +205,58 @@ private fun MarkazApp(activity: MainActivity) {
                 }
             } catch (e: Exception) {
                 activity.runOnUiThread { notice = e.message ?: "تعذر تحديث طلبات الربط." }
+            }
+        }
+    }
+
+    fun refreshScreenSessions(authToken: String) {
+        network.execute {
+            try {
+                val result = requestApi("GET", "/api/screen-sessions", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                val parsed = buildList {
+                    val array = JSONArray(result.body)
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        add(ScreenSessionItem(
+                            id = item.optLong("id"),
+                            controllerId = item.optLong("controller_id"),
+                            targetId = item.optLong("target_id"),
+                            controllerUsername = item.optString("controller_username", "حساب"),
+                            targetUsername = item.optString("target_username", "حساب"),
+                            status = item.optString("status", "requested")
+                        ))
+                    }
+                }
+                activity.runOnUiThread { screenSessions = parsed }
+            } catch (e: Exception) {
+                activity.runOnUiThread { notice = e.message ?: "تعذر تحديث طلبات مشاركة الشاشة." }
+            }
+        }
+    }
+
+    fun decideScreenSession(item: ScreenSessionItem, accepted: Boolean) {
+        val authToken = token ?: return
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi(
+                    "POST", "/api/screen-sessions/${item.id}/decision", authToken,
+                    JSONObject().put("accepted", accepted)
+                )
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                activity.runOnUiThread {
+                    notice = if (accepted)
+                        "وافقت على الطلب. لم يبدأ بث الشاشة؛ يلزم تفعيل التقاط الشاشة بموافقتك من أندرويد."
+                    else "تم رفض طلب مشاركة الشاشة."
+                    busy = false
+                    refreshScreenSessions(authToken)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر تسجيل قرار مشاركة الشاشة."
+                    busy = false
+                }
             }
         }
     }
