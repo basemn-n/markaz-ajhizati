@@ -29,6 +29,8 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val API_BASE = "https://markaz-ajhizati-api.onrender.com"
 private val network = Executors.newSingleThreadExecutor()
@@ -99,6 +101,74 @@ private fun errorMessage(result: ApiResult): String {
     }
 }
 
+/**
+ * Polls commands for the signed-in target account and returns each result to the API.
+ * This function must be called from Dispatchers.IO, never from the Compose UI thread.
+ */
+private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
+    val poll = requestApi("GET", "/api/commands/pending", authToken)
+    if (poll.status !in 200..299) return
+
+    val commands = JSONArray(poll.body)
+    for (i in 0 until commands.length()) {
+        val item = commands.optJSONObject(i) ?: continue
+        val commandId = item.optLong("id", -1L)
+        if (commandId <= 0L) continue
+
+        val command = item.optString("command")
+        val resultPayload = JSONObject()
+        val resultStatus = try {
+            when (command) {
+                "/status" -> {
+                    resultPayload
+                        .put("online", true)
+                        .put("app", "markaz-ajhizati-android")
+                        .put("device_name", deviceName)
+                        .put("android_version", Build.VERSION.RELEASE.orEmpty())
+                        .put("sdk_int", Build.VERSION.SDK_INT)
+                        .put("checked_at", System.currentTimeMillis())
+                    "completed"
+                }
+                "/device" -> {
+                    resultPayload
+                        .put("device_name", deviceName)
+                        .put("manufacturer", Build.MANUFACTURER.orEmpty())
+                        .put("model", Build.MODEL.orEmpty())
+                        .put("android_version", Build.VERSION.RELEASE.orEmpty())
+                        .put("sdk_int", Build.VERSION.SDK_INT)
+                    "completed"
+                }
+                "/help" -> {
+                    resultPayload
+                        .put("commands", JSONArray(listOf("/status", "/device", "/help")))
+                        .put("message", "هذه أوامر معلوماتية فقط؛ لا تنفذ أوامر نظام أو تتحكم بالجهاز.")
+                    "completed"
+                }
+                else -> {
+                    resultPayload.put("error", "الأمر غير مدعوم في تطبيق أندرويد.")
+                    "failed"
+                }
+            }
+        } catch (e: Exception) {
+            resultPayload.put("error", e.message ?: "تعذر تنفيذ الأمر.")
+            "failed"
+        }
+
+        // A result is submitted separately for every claimed command.
+        try {
+            requestApi(
+                "POST",
+                "/api/commands/$commandId/result",
+                authToken,
+                JSONObject().put("status", resultStatus).put("result", resultPayload)
+            )
+        } catch (_: Exception) {
+            // A network interruption leaves the command claimed on the server;
+            // the next polling cycle can continue with other pending commands.
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,19 +193,22 @@ private fun MarkazApp(activity: MainActivity) {
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("سجّل الدخول لربط تطبيق أندرويد بحسابك.") }
 
-    LaunchedEffect(token) {
-        val authToken = token ?: return@LaunchedEffect
-        while (true) {
-            refreshScreenSessions(authToken)
-            delay(5000)
-        }
-    }
-
     val deviceName = remember {
         val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
         val model = Build.MODEL.orEmpty()
         listOf(manufacturer, model).filter { it.isNotBlank() }.distinct().joinToString(" ").take(80)
             .ifBlank { "جهاز أندرويد" }
+    }
+
+    // Keep network polling off the main/UI thread. Cancellation follows login/logout.
+    LaunchedEffect(token, deviceName) {
+        val authToken = token ?: return@LaunchedEffect
+        while (true) {
+            withContext(Dispatchers.IO) {
+                pollAndExecuteCommands(authToken, deviceName)
+            }
+            delay(5000)
+        }
     }
 
     fun loadDevices(authToken: String, createIfMissing: Boolean) {
