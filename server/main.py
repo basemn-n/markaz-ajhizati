@@ -823,8 +823,10 @@ def stop_screen_session(session_id: int, user: CurrentUser):
         ).fetchone()
         if not session:
             raise HTTPException(status_code=404, detail="Screen-sharing session not found")
-        db.execute("UPDATE screen_sessions SET status='stopped', updated_at=? WHERE id=?", (now(), session_id))
         peer_id = session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]
+        # A revoked pairing must not be able to send stop/signaling messages.
+        _approved_screen_link(db, int(user["id"]), int(peer_id))
+        db.execute("UPDATE screen_sessions SET status='stopped', updated_at=? WHERE id=?", (now(), session_id))
         db.execute(
             """INSERT INTO screen_signals(session_id, sender_id, recipient_id, kind, payload, created_at)
                VALUES(?,?,?,'stop','{}',?)""",
