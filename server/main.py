@@ -167,7 +167,8 @@ def init_db() -> None:
             result_json TEXT,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
-            completed_at TEXT
+            completed_at TEXT,
+            claimed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_device_commands_target
             ON device_commands(target_id, status, id);
@@ -256,7 +257,8 @@ def init_db() -> None:
             result_json TEXT,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
-            completed_at TEXT
+            completed_at TEXT,
+            claimed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_device_commands_target
             ON device_commands(target_id, status, id);
@@ -269,6 +271,12 @@ def init_db() -> None:
         """
     with connect() as db:
         db.executescript(schema)
+        if IS_POSTGRES:
+            db.execute("ALTER TABLE device_commands ADD COLUMN IF NOT EXISTS claimed_at TEXT")
+        else:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(device_commands)").fetchall()}
+            if "claimed_at" not in columns:
+                db.execute("ALTER TABLE device_commands ADD COLUMN claimed_at TEXT")
 init_db()
 
 
@@ -591,13 +599,22 @@ def create_device_command(payload: CommandCreate, user: CurrentUser):
 
 @app.get("/api/commands/pending")
 def poll_pending_commands(user: CurrentUser):
-    """Claim pending commands addressed only to the authenticated target account."""
+    """Recover abandoned claims, expire stale commands, and claim approved commands."""
     current_time = now()
+    # Claims are leases: after 60 seconds without a result they may be delivered again.
+    # Supported commands are read-only/idempotent, so retrying them is safe.
+    lease_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
     with connect() as db:
         db.execute(
-            """UPDATE device_commands SET status='expired'
-               WHERE target_id=? AND status='pending' AND expires_at<=?""",
+            """UPDATE device_commands SET status='expired', claimed_at=NULL
+               WHERE target_id=? AND status IN ('pending','claimed') AND expires_at<=?""",
             (user["id"], current_time),
+        )
+        db.execute(
+            """UPDATE device_commands SET status='pending', claimed_at=NULL
+               WHERE target_id=? AND status='claimed' AND expires_at>?
+                 AND (claimed_at IS NULL OR claimed_at<=?)""",
+            (user["id"], current_time, lease_cutoff),
         )
         rows = db.execute(
             """SELECT c.id, c.sender_id, c.command, c.args_json, c.created_at, c.expires_at
@@ -615,9 +632,9 @@ def poll_pending_commands(user: CurrentUser):
         for row in rows:
             item = dict(row)
             claimed = db.execute(
-                """UPDATE device_commands SET status='claimed'
+                """UPDATE device_commands SET status='claimed', claimed_at=?
                    WHERE id=? AND target_id=? AND status='pending' AND expires_at>?""",
-                (item["id"], user["id"], current_time),
+                (current_time, item["id"], user["id"], current_time),
             )
             if claimed.rowcount != 1:
                 continue
@@ -646,6 +663,7 @@ def submit_command_result(
         raise HTTPException(status_code=413, detail="Command result is too large")
 
     completed_time = now()
+    expired = False
     with connect() as db:
         command = db.execute(
             """SELECT id, sender_id, target_id, status, expires_at
@@ -658,30 +676,31 @@ def submit_command_result(
             raise HTTPException(status_code=409, detail="Command is not awaiting a result")
         if command["expires_at"] <= completed_time:
             db.execute(
-                "UPDATE device_commands SET status='expired' WHERE id=? AND status='claimed'",
+                """UPDATE device_commands SET status='expired', claimed_at=NULL
+                   WHERE id=? AND status='claimed'""",
                 (command_id,),
             )
-            # Raise after the context would roll back this update; expiry is still
-            # enforced by refusing the result, and a later poll/cleanup can expire it.
-            raise HTTPException(status_code=409, detail="Command has expired")
+            expired = True
+        else:
+            link = db.execute(
+                """SELECT id FROM device_links
+                   WHERE controller_id=? AND target_id=? AND status='approved'""",
+                (command["sender_id"], user["id"]),
+            ).fetchone()
+            if not link:
+                raise HTTPException(status_code=403, detail="Approved link is required")
 
-        link = db.execute(
-            """SELECT id FROM device_links
-               WHERE controller_id=? AND target_id=? AND status='approved'""",
-            (command["sender_id"], user["id"]),
-        ).fetchone()
-        if not link:
-            raise HTTPException(status_code=403, detail="Approved link is required")
+            changed = db.execute(
+                """UPDATE device_commands
+                   SET status=?, result_json=?, completed_at=?, claimed_at=NULL
+                   WHERE id=? AND target_id=? AND status='claimed'""",
+                (payload.status, result_json, completed_time, command_id, user["id"]),
+            )
+            if changed.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Command result was already submitted")
 
-        changed = db.execute(
-            """UPDATE device_commands
-               SET status=?, result_json=?, completed_at=?
-               WHERE id=? AND target_id=? AND status='claimed'""",
-            (payload.status, result_json, completed_time, command_id, user["id"]),
-        )
-        if changed.rowcount != 1:
-            raise HTTPException(status_code=409, detail="Command result was already submitted")
-
+    if expired:
+        raise HTTPException(status_code=409, detail="Command has expired")
     return {"id": command_id, "status": payload.status}
 
 
