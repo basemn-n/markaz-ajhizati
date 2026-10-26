@@ -136,6 +136,26 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
         CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS screen_sessions (
+            id BIGSERIAL PRIMARY KEY,
+            link_id BIGINT NOT NULL REFERENCES device_links(id) ON DELETE CASCADE,
+            controller_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK (status IN ('requested','accepted','rejected','active','stopped')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_screen_sessions_participants ON screen_sessions(controller_id, target_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS screen_signals (
+            id BIGSERIAL PRIMARY KEY,
+            session_id BIGINT NOT NULL REFERENCES screen_sessions(id) ON DELETE CASCADE,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (kind IN ('offer','answer','ice','stop')),
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_screen_signals_poll ON screen_signals(session_id, recipient_id, id);
         CREATE TABLE IF NOT EXISTS user_presence (
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
@@ -188,6 +208,26 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_device_links_target ON device_links(target_id, status, id DESC);
         CREATE INDEX IF NOT EXISTS idx_device_links_controller ON device_links(controller_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS screen_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            link_id BIGINT NOT NULL REFERENCES device_links(id) ON DELETE CASCADE,
+            controller_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK (status IN ('requested','accepted','rejected','active','stopped')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_screen_sessions_participants ON screen_sessions(controller_id, target_id, status, id DESC);
+        CREATE TABLE IF NOT EXISTS screen_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id BIGINT NOT NULL REFERENCES screen_sessions(id) ON DELETE CASCADE,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (kind IN ('offer','answer','ice','stop')),
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_screen_signals_poll ON screen_signals(session_id, recipient_id, id);
         CREATE TABLE IF NOT EXISTS user_presence (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
@@ -636,3 +676,158 @@ def revoke_pairing(pairing_id: int, user: CurrentUser):
             raise HTTPException(status_code=409, detail="Only an approved link can be revoked")
         db.execute("UPDATE device_links SET status='revoked' WHERE id=?", (pairing_id,))
     return {"id": pairing_id, "status": "revoked"}
+
+
+# Screen-sharing signaling foundation. This API relays WebRTC negotiation only;
+# it does not capture a screen or bypass Android's MediaProjection consent dialog.
+class ScreenSessionCreate(BaseModel):
+    target_user_id: int = Field(gt=0)
+
+
+class ScreenSignalCreate(BaseModel):
+    kind: str = Field(pattern=r"^(offer|answer|ice|stop)$")
+    payload: dict = Field(default_factory=dict)
+
+
+def _approved_screen_link(db, actor_id: int, peer_id: int):
+    link = db.execute(
+        """SELECT id, controller_id, target_id FROM device_links
+           WHERE status='approved'
+             AND ((controller_id=? AND target_id=?) OR (controller_id=? AND target_id=?))
+           ORDER BY id DESC LIMIT 1""",
+        (actor_id, peer_id, peer_id, actor_id),
+    ).fetchone()
+    if not link:
+        raise HTTPException(status_code=403, detail="An approved pairing is required for screen sharing")
+    return dict(link)
+
+
+@app.post("/api/screen-sessions", status_code=201)
+def create_screen_session(payload: ScreenSessionCreate, user: CurrentUser):
+    """Controller requests a screen session. The target must explicitly accept on its device."""
+    if int(payload.target_user_id) == int(user["id"]):
+        raise HTTPException(status_code=422, detail="Cannot share a screen with the same account")
+    with connect() as db:
+        link = _approved_screen_link(db, int(user["id"]), int(payload.target_user_id))
+        cur = db.execute(
+            """INSERT INTO screen_sessions(link_id, controller_id, target_id, status, created_at, updated_at)
+               VALUES(?,?,?,'requested',?,?) RETURNING id""",
+            (link["id"], user["id"], payload.target_user_id, now(), now()),
+        )
+        session_id = cur.fetchone()["id"]
+    return {"id": session_id, "status": "requested",
+            "message": "Request sent. The target must explicitly accept screen sharing on the Android device."}
+
+
+@app.get("/api/screen-sessions")
+def list_screen_sessions(user: CurrentUser):
+    with connect() as db:
+        rows = db.execute(
+            """SELECT s.id, s.link_id, s.controller_id, s.target_id, s.status, s.created_at, s.updated_at,
+                      c.username AS controller_username, t.username AS target_username
+               FROM screen_sessions s
+               JOIN users c ON c.id=s.controller_id JOIN users t ON t.id=s.target_id
+               WHERE (s.controller_id=? OR s.target_id=?) AND s.status IN ('requested','accepted','active')
+               ORDER BY s.id DESC LIMIT 50""",
+            (user["id"], user["id"]),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+class ScreenSessionDecision(BaseModel):
+    accepted: bool
+
+
+@app.post("/api/screen-sessions/{session_id}/decision")
+def decide_screen_session(session_id: int, payload: ScreenSessionDecision, user: CurrentUser):
+    """Only the target account can accept a request; acceptance alone does not start capture."""
+    status = "accepted" if payload.accepted else "rejected"
+    with connect() as db:
+        row = db.execute(
+            "SELECT id, link_id, controller_id, target_id, status FROM screen_sessions WHERE id=? AND target_id=?",
+            (session_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Screen-sharing request not found")
+        _approved_screen_link(db, int(user["id"]), int(row["controller_id"]))
+        if row["status"] != "requested":
+            raise HTTPException(status_code=409, detail="Screen-sharing request is no longer pending")
+        db.execute("UPDATE screen_sessions SET status=?, updated_at=? WHERE id=?",
+                   (status, now(), session_id))
+    return {"id": session_id, "status": status}
+
+
+@app.post("/api/screen-sessions/{session_id}/signals", status_code=201)
+def send_screen_signal(session_id: int, payload: ScreenSignalCreate, user: CurrentUser):
+    """Store a bounded WebRTC signaling message for the other participant."""
+    serialized = json.dumps(payload.payload, separators=(",", ":"), ensure_ascii=True)
+    if len(serialized) > 12000:
+        raise HTTPException(status_code=413, detail="Signaling payload is too large")
+    with connect() as db:
+        session = db.execute(
+            "SELECT id, link_id, controller_id, target_id, status FROM screen_sessions WHERE id=?",
+            (session_id,),
+        ).fetchone()
+        if not session or int(user["id"]) not in (int(session["controller_id"]), int(session["target_id"])):
+            raise HTTPException(status_code=404, detail="Screen-sharing session not found")
+        _approved_screen_link(db, int(user["id"]),
+                              int(session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]))
+        if session["status"] not in ("accepted", "active"):
+            raise HTTPException(status_code=409, detail="The target has not accepted this screen-sharing request")
+        recipient_id = session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]
+        cur = db.execute(
+            """INSERT INTO screen_signals(session_id, sender_id, recipient_id, kind, payload, created_at)
+               VALUES(?,?,?,?,?,?) RETURNING id""",
+            (session_id, user["id"], recipient_id, payload.kind, serialized, now()),
+        )
+        signal_id = cur.fetchone()["id"]
+        if payload.kind == "stop":
+            db.execute("UPDATE screen_sessions SET status='stopped', updated_at=? WHERE id=?",
+                       (now(), session_id))
+    return {"id": signal_id, "ok": True}
+
+
+@app.get("/api/screen-sessions/{session_id}/signals")
+def poll_screen_signals(session_id: int, user: CurrentUser, after_id: int = Query(default=0, ge=0)):
+    with connect() as db:
+        session = db.execute(
+            "SELECT id, controller_id, target_id, status FROM screen_sessions WHERE id=?",
+            (session_id,),
+        ).fetchone()
+        if not session or int(user["id"]) not in (int(session["controller_id"]), int(session["target_id"])):
+            raise HTTPException(status_code=404, detail="Screen-sharing session not found")
+        peer_id = session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]
+        _approved_screen_link(db, int(user["id"]), int(peer_id))
+        rows = db.execute(
+            """SELECT id, sender_id, kind, payload, created_at FROM screen_signals
+               WHERE session_id=? AND recipient_id=? AND id>? ORDER BY id LIMIT 100""",
+            (session_id, user["id"], after_id),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["payload"] = json.loads(item["payload"])
+        except (TypeError, ValueError):
+            item["payload"] = {}
+        result.append(item)
+    return {"status": session["status"], "signals": result}
+
+
+@app.post("/api/screen-sessions/{session_id}/stop")
+def stop_screen_session(session_id: int, user: CurrentUser):
+    with connect() as db:
+        session = db.execute(
+            "SELECT id, controller_id, target_id FROM screen_sessions WHERE id=? AND (controller_id=? OR target_id=?)",
+            (session_id, user["id"], user["id"]),
+        ).fetchone()
+        if not session:
+            raise HTTPException(status_code=404, detail="Screen-sharing session not found")
+        db.execute("UPDATE screen_sessions SET status='stopped', updated_at=? WHERE id=?", (now(), session_id))
+        peer_id = session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]
+        db.execute(
+            """INSERT INTO screen_signals(session_id, sender_id, recipient_id, kind, payload, created_at)
+               VALUES(?,?,?,'stop','{}',?)""",
+            (session_id, user["id"], peer_id, now()),
+        )
+    return {"id": session_id, "status": "stopped"}
