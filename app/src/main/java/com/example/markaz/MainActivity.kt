@@ -116,7 +116,8 @@ private fun MarkazApp(activity: MainActivity) {
     var signedInUsername by remember { mutableStateOf("") }
     var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
     var incoming by remember { mutableStateOf<List<PairItem>>(emptyList()) }
-    var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }\n    var screenSessions by remember { mutableStateOf<List<ScreenSessionItem>>(emptyList()) }
+    var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }
+    var screenSessions by remember { mutableStateOf<List<ScreenSessionItem>>(emptyList()) }
     var pairingCode by remember { mutableStateOf("") }
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
