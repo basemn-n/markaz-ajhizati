@@ -46,6 +46,7 @@
     <nav class="tabs" aria-label="التنقل">
       <button class="tab active" data-tab="devices" type="button">ربط جهاز</button>
       <button class="tab" data-tab="requests" type="button">طلبات الموافقة</button>
+      <button class="tab" data-tab="screen" type="button">مشاركة الشاشة</button>
       <button class="tab" data-tab="chats" type="button">المحادثات</button>
     </nav>
 
@@ -74,6 +75,21 @@
       <div class="section-heading"><div><h2>طلبات الوصول الواردة</h2><p class="muted">راجع اسم الحساب ووافق فقط إذا كنت تريد ربطه بهاتفك.</p></div><button id="refreshRequestsBtn" class="secondary" type="button">تحديث</button></div>
       <div id="incomingList" class="device-list"></div>
       <div class="notice">الموافقة تنشئ رابطًا بين الحسابين فقط؛ لا تمنح تلقائيًا وصولًا إلى الملفات أو الشاشة.</div>
+    </section>
+
+    <section id="screen" class="panel hidden">
+      <div class="section-heading"><div><h2>مشاركة الشاشة</h2><p class="muted">إرسال طلب ومراجعته فقط. البث الفعلي لم يُفعّل بعد.</p></div><button id="refreshScreenBtn" class="secondary" type="button">تحديث</button></div>
+      <div class="card">
+        <h3>طلب مشاركة شاشة جهاز مرتبط</h3>
+        <p class="muted">لن يبدأ البث إلا بعد موافقة الطرف الآخر وتوصيل خدمة البث الفعلية.</p>
+        <form id="screenRequestForm" class="chat-form">
+          <select id="screenTargetSelect" required aria-label="الحساب المرتبط"></select>
+          <button id="screenRequestBtn" class="primary" type="submit">إرسال طلب</button>
+        </form>
+        <div id="screenNotice" class="notice hidden" role="status"></div>
+      </div>
+      <div class="section-heading"><div><h2>الطلبات الحالية</h2></div></div>
+      <div id="screenSessionList" class="device-list"></div>
     </section>
 
     <section id="chats" class="panel hidden">
