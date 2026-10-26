@@ -284,9 +284,121 @@ document.querySelector("#pairForm").addEventListener("submit", async (event) => 
 });
 document.querySelector("#refreshLinksBtn").addEventListener("click", refreshLinks);
 document.querySelector("#refreshRequestsBtn").addEventListener("click", refreshIncoming);
+
+function screenStatusArabic(status) {
+  return ({requested:"بانتظار الموافقة", accepted:"تمت الموافقة — البث غير متصل بعد", active:"جلسة نشطة", rejected:"تم الرفض", stopped:"تم الإيقاف", expired:"انتهت الجلسة"})[status] || status;
+}
+function showScreenNotice(message) {
+  const box = document.querySelector("#screenNotice");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+async function refreshScreenTargets() {
+  const select = document.querySelector("#screenTargetSelect");
+  const previous = select.value;
+  const items = await api("/api/pairings");
+  const approved = items.filter(item => item.status === "approved");
+  select.replaceChildren();
+  if (!approved.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "لا توجد حسابات مرتبطة وموافق عليها";
+    select.append(option);
+    select.disabled = true;
+    document.querySelector("#screenRequestBtn").disabled = true;
+    return;
+  }
+  select.disabled = false;
+  document.querySelector("#screenRequestBtn").disabled = false;
+  approved.forEach(item => {
+    const option = document.createElement("option");
+    option.value = String(item.target_user_id);
+    option.textContent = item.target_username || "حساب مرتبط";
+    select.append(option);
+  });
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+async function refreshScreenSessions() {
+  const list = document.querySelector("#screenSessionList");
+  list.replaceChildren();
+  try {
+    const items = await api("/api/screen-sessions");
+    if (!items.length) return emptyMessage(list, "لا توجد طلبات مشاركة شاشة حاليًا.");
+    items.forEach(item => {
+      const card = document.createElement("article");
+      card.className = "device";
+      const icon = document.createElement("div");
+      icon.className = "device-icon";
+      icon.textContent = "▣";
+      const info = document.createElement("div");
+      info.className = "device-info";
+      const title = document.createElement("strong");
+      title.textContent = "مشاركة شاشة مع: " + (item.controller_id === currentUser?.id ? (item.target_username || "حساب مرتبط") : (item.controller_username || "حساب مرتبط"));
+      const status = document.createElement("span");
+      status.textContent = screenStatusArabic(item.status);
+      info.append(title, status);
+      card.append(icon, info);
+      if (item.status === "requested" && Number(item.target_id) === Number(currentUser?.id)) {
+        const actions = document.createElement("div");
+        actions.style.display = "flex";
+        actions.style.gap = "6px";
+        [true, false].forEach(accepted => {
+          const button = document.createElement("button");
+          button.className = accepted ? "primary" : "secondary";
+          button.type = "button";
+          button.textContent = accepted ? "موافقة" : "رفض";
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              await api("/api/screen-sessions/" + item.id + "/decision", {method:"POST", body:JSON.stringify({accepted})});
+              notify(accepted ? "سُجلت الموافقة؛ البث الفعلي غير متصل بعد." : "تم رفض طلب مشاركة الشاشة.");
+              await refreshScreenAll();
+            } catch (error) { notify(error.message); button.disabled = false; }
+          });
+          actions.append(button);
+        });
+        card.append(actions);
+      }
+      if (["requested", "accepted", "active"].includes(item.status)) {
+        const stop = document.createElement("button");
+        stop.className = "secondary";
+        stop.type = "button";
+        stop.textContent = "إيقاف الطلب";
+        stop.addEventListener("click", async () => {
+          try {
+            await api("/api/screen-sessions/" + item.id + "/stop", {method:"POST"});
+            notify("تم إيقاف الطلب.");
+            await refreshScreenAll();
+          } catch (error) { notify(error.message); }
+        });
+        card.append(stop);
+      }
+      list.append(card);
+    });
+  } catch (error) { emptyMessage(list, error.message); }
+}
+async function refreshScreenAll() {
+  await Promise.allSettled([refreshScreenTargets(), refreshScreenSessions()]);
+}
+document.querySelector("#screenRequestForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const target = Number(document.querySelector("#screenTargetSelect").value);
+  if (!Number.isInteger(target) || target <= 0) return showScreenNotice("اختر حسابًا مرتبطًا أولًا.");
+  const button = document.querySelector("#screenRequestBtn");
+  button.disabled = true;
+  try {
+    await api("/api/screen-sessions", {method:"POST", body:JSON.stringify({target_user_id:target})});
+    showScreenNotice("تم إرسال الطلب. يلزم قبول الطرف الآخر؛ البث الفعلي غير متصل بعد.");
+    await refreshScreenAll();
+  } catch (error) { showScreenNotice(error.message); }
+  finally { button.disabled = false; }
+});
+document.querySelector("#refreshScreenBtn").addEventListener("click", refreshScreenAll);
+
 document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll(".tab[data-tab]").forEach((b) => b.classList.toggle("active", b === button));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
+  if (button.dataset.tab === "screen") refreshScreenAll();
 }));
 let installPrompt = null;
 const installBtn = document.querySelector("#installBtn");
