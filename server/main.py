@@ -156,6 +156,23 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_screen_signals_poll ON screen_signals(session_id, recipient_id, id);
+        CREATE TABLE IF NOT EXISTS device_commands (
+            id BIGSERIAL PRIMARY KEY,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            command TEXT NOT NULL,
+            args_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'claimed', 'completed', 'failed', 'expired')),
+            result_json TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_commands_target
+            ON device_commands(target_id, status, id);
+        CREATE INDEX IF NOT EXISTS idx_device_commands_sender
+            ON device_commands(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS user_presence (
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
@@ -228,6 +245,23 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_screen_signals_poll ON screen_signals(session_id, recipient_id, id);
+        CREATE TABLE IF NOT EXISTS device_commands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            command TEXT NOT NULL,
+            args_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'claimed', 'completed', 'failed', 'expired')),
+            result_json TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_commands_target
+            ON device_commands(target_id, status, id);
+        CREATE INDEX IF NOT EXISTS idx_device_commands_sender
+            ON device_commands(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS user_presence (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
@@ -262,6 +296,21 @@ class DeviceCreate(BaseModel):
 class MessageCreate(BaseModel):
     recipient_username: str = Field(min_length=3, max_length=32)
     body: str = Field(min_length=1, max_length=4000)
+
+
+class CommandCreate(BaseModel):
+    target_user_id: int = Field(gt=0)
+    command: str = Field(min_length=1, max_length=40)
+    args: dict = Field(default_factory=dict)
+
+
+class CommandResultCreate(BaseModel):
+    status: str = Field(pattern=r"^(completed|failed)$")
+    result: dict = Field(default_factory=dict)
+
+
+ALLOWED_DEVICE_COMMANDS = {"/status", "/device", "/help"}
+COMMAND_TTL_MINUTES = 5
 
 
 def auth_secret() -> bytes:
@@ -498,6 +547,172 @@ def get_messages(
             (user["id"], other["id"], other["id"], user["id"], limit),
         ).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+@app.post("/api/commands", status_code=201)
+def create_device_command(payload: CommandCreate, user: CurrentUser):
+    """Queue a bounded command for a target account with an approved link."""
+    command = payload.command.strip().lower()
+    if command not in ALLOWED_DEVICE_COMMANDS:
+        raise HTTPException(status_code=422, detail="This device command is not allowed")
+    if payload.args:
+        raise HTTPException(status_code=422, detail="Arguments are not supported for this command")
+    if int(payload.target_user_id) == int(user["id"]):
+        raise HTTPException(status_code=422, detail="Cannot send a command to the same account")
+
+    created = datetime.now(timezone.utc)
+    created_text = created.isoformat()
+    expires_text = (created + timedelta(minutes=COMMAND_TTL_MINUTES)).isoformat()
+
+    with connect() as db:
+        link = db.execute(
+            """SELECT id FROM device_links
+               WHERE controller_id=? AND target_id=? AND status='approved'""",
+            (user["id"], payload.target_user_id),
+        ).fetchone()
+        if not link:
+            raise HTTPException(status_code=403, detail="An approved link is required")
+
+        cur = db.execute(
+            """INSERT INTO device_commands
+               (sender_id, target_id, command, args_json, status, created_at, expires_at)
+               VALUES (?, ?, ?, '{}', 'pending', ?, ?) RETURNING id""",
+            (user["id"], payload.target_user_id, command, created_text, expires_text),
+        )
+        command_id = cur.fetchone()["id"]
+
+    return {
+        "id": command_id,
+        "command": command,
+        "status": "pending",
+        "expires_at": expires_text,
+    }
+
+
+@app.get("/api/commands/pending")
+def poll_pending_commands(user: CurrentUser):
+    """Claim pending commands addressed only to the authenticated target account."""
+    current_time = now()
+    with connect() as db:
+        db.execute(
+            """UPDATE device_commands SET status='expired'
+               WHERE target_id=? AND status='pending' AND expires_at<=?""",
+            (user["id"], current_time),
+        )
+        rows = db.execute(
+            """SELECT c.id, c.sender_id, c.command, c.args_json, c.created_at, c.expires_at
+               FROM device_commands c
+               JOIN device_links l
+                 ON l.controller_id=c.sender_id
+                AND l.target_id=c.target_id
+                AND l.status='approved'
+               WHERE c.target_id=? AND c.status='pending' AND c.expires_at>?
+               ORDER BY c.id LIMIT 20""",
+            (user["id"], current_time),
+        ).fetchall()
+
+        commands = []
+        for row in rows:
+            item = dict(row)
+            claimed = db.execute(
+                """UPDATE device_commands SET status='claimed'
+                   WHERE id=? AND target_id=? AND status='pending' AND expires_at>?""",
+                (item["id"], user["id"], current_time),
+            )
+            if claimed.rowcount != 1:
+                continue
+            try:
+                args = json.loads(item["args_json"])
+            except (TypeError, ValueError):
+                args = {}
+            commands.append({
+                "id": item["id"],
+                "command": item["command"],
+                "args": args,
+                "created_at": item["created_at"],
+                "expires_at": item["expires_at"],
+            })
+    return commands
+
+
+@app.post("/api/commands/{command_id}/result")
+def submit_command_result(
+    command_id: int,
+    payload: CommandResultCreate,
+    user: CurrentUser,
+):
+    result_json = json.dumps(payload.result, ensure_ascii=False, separators=(",", ":"))
+    if len(result_json) > 4000:
+        raise HTTPException(status_code=413, detail="Command result is too large")
+
+    completed_time = now()
+    with connect() as db:
+        command = db.execute(
+            """SELECT id, sender_id, target_id, status, expires_at
+               FROM device_commands WHERE id=?""",
+            (command_id,),
+        ).fetchone()
+        if not command or int(command["target_id"]) != int(user["id"]):
+            raise HTTPException(status_code=404, detail="Command not found")
+        if command["status"] != "claimed":
+            raise HTTPException(status_code=409, detail="Command is not awaiting a result")
+        if command["expires_at"] <= completed_time:
+            db.execute(
+                "UPDATE device_commands SET status='expired' WHERE id=? AND status='claimed'",
+                (command_id,),
+            )
+            # Raise after the context would roll back this update; expiry is still
+            # enforced by refusing the result, and a later poll/cleanup can expire it.
+            raise HTTPException(status_code=409, detail="Command has expired")
+
+        link = db.execute(
+            """SELECT id FROM device_links
+               WHERE controller_id=? AND target_id=? AND status='approved'""",
+            (command["sender_id"], user["id"]),
+        ).fetchone()
+        if not link:
+            raise HTTPException(status_code=403, detail="Approved link is required")
+
+        changed = db.execute(
+            """UPDATE device_commands
+               SET status=?, result_json=?, completed_at=?
+               WHERE id=? AND target_id=? AND status='claimed'""",
+            (payload.status, result_json, completed_time, command_id, user["id"]),
+        )
+        if changed.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Command result was already submitted")
+
+    return {"id": command_id, "status": payload.status}
+
+
+@app.get("/api/commands")
+def list_my_commands(
+    user: CurrentUser,
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    """List commands created by the signed-in controller and their results."""
+    with connect() as db:
+        rows = db.execute(
+            """SELECT c.id, c.target_id, u.username AS target_username,
+                      c.command, c.status, c.result_json,
+                      c.created_at, c.expires_at, c.completed_at
+               FROM device_commands c
+               JOIN users u ON u.id=c.target_id
+               WHERE c.sender_id=?
+               ORDER BY c.id DESC LIMIT ?""",
+            (user["id"], limit),
+        ).fetchall()
+
+    output = []
+    for row in rows:
+        item = dict(row)
+        try:
+            raw_result = item.pop("result_json")
+            item["result"] = json.loads(raw_result) if raw_result else None
+        except (TypeError, ValueError):
+            item["result"] = None
+        output.append(item)
+    return output
 
 
 class PairingCodeRequest(BaseModel):
