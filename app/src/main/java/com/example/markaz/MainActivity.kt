@@ -28,6 +28,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
+import kotlinx.coroutines.delay
 
 private const val API_BASE = "https://markaz-ajhizati-api.onrender.com"
 private val network = Executors.newSingleThreadExecutor()
@@ -120,6 +121,14 @@ private fun MarkazApp(activity: MainActivity) {
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("سجّل الدخول لربط تطبيق أندرويد بحسابك.") }
+
+    LaunchedEffect(token) {
+        val authToken = token ?: return@LaunchedEffect
+        while (true) {
+            refreshScreenSessions(authToken)
+            delay(5000)
+        }
+    }
 
     val deviceName = remember {
         val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
@@ -547,6 +556,55 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
+                    Divider()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("طلبات مشاركة الشاشة", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { token?.let { refreshScreenSessions(it) } }, enabled = !busy) { Text("تحديث") }
+                    }
+                    val pendingScreenRequests = screenSessions.filter {
+                        it.status == "requested" && it.targetUsername.equals(signedInUsername, ignoreCase = true)
+                    }
+                    if (pendingScreenRequests.isEmpty()) {
+                        Text("لا توجد طلبات مشاركة شاشة واردة حاليًا.", fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    pendingScreenRequests.forEach { item ->
+                        Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF1FF))) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("طلب مشاركة شاشة", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text("الحساب ${item.controllerUsername} يريد مشاهدة شاشة هذا الجهاز.")
+                                Text("الموافقة لا تبدأ البث؛ التقاط الشاشة ما زال غير مفعّل.",
+                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { decideScreenSession(item, true) }, enabled = !busy,
+                                        modifier = Modifier.weight(1f)) { Text("موافقة") }
+                                    OutlinedButton(onClick = { decideScreenSession(item, false) }, enabled = !busy,
+                                        modifier = Modifier.weight(1f)) { Text("رفض") }
+                                }
+                            }
+                        }
+                    }
+                    Text("جلسات مشاركة الشاشة", fontWeight = FontWeight.Bold)
+                    screenSessions.filter { it.status != "requested" || it.controllerUsername.equals(signedInUsername, ignoreCase = true) }
+                        .forEach { item ->
+                            Card(shape = RoundedCornerShape(14.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(if (item.controllerUsername.equals(signedInUsername, ignoreCase = true))
+                                        "مع ${item.targetUsername}" else "من ${item.controllerUsername}",
+                                        fontWeight = FontWeight.SemiBold)
+                                    Text(when (item.status) {
+                                        "requested" -> "بانتظار الموافقة"
+                                        "accepted" -> "تمت الموافقة — البث غير مفعّل"
+                                        "active" -> "نشطة"
+                                        else -> item.status
+                                    }, fontSize = 13.sp)
+                                }
+                            }
+                        }
                     Text("الحسابات المرتبطة", fontWeight = FontWeight.Bold)
                     if (outgoing.isEmpty()) Text("لا توجد روابط صادرة من هذا الحساب.", fontSize = 13.sp)
                     outgoing.forEach { item ->
