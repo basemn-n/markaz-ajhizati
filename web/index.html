@@ -47,6 +47,7 @@
       <button class="tab active" data-tab="devices" type="button">ربط جهاز</button>
       <button class="tab" data-tab="requests" type="button">طلبات الموافقة</button>
       <button class="tab" data-tab="screen" type="button">مشاركة الشاشة</button>
+      <button class="tab" data-tab="commands" type="button">أوامر الجهاز</button>
       <button class="tab" data-tab="chats" type="button">المحادثات</button>
     </nav>
 
@@ -90,6 +91,27 @@
       </div>
       <div class="section-heading"><div><h2>الطلبات الحالية</h2></div></div>
       <div id="screenSessionList" class="device-list"></div>
+    </section>
+
+    <section id="commands" class="panel hidden">
+      <div class="section-heading"><div><h2>أوامر الجهاز</h2><p class="muted">أوامر قراءة محدودة للحساب المرتبط والموافق عليه.</p></div><button id="refreshCommandsBtn" class="secondary" type="button">تحديث السجل</button></div>
+      <div class="card">
+        <h3>إرسال أمر</h3>
+        <p class="muted">الأمر يبقى صالحًا لمدة 5 دقائق. إرساله لا يعني أن الجهاز نفّذه؛ يجب أن يكون على الجهاز العميل الذي يستقبل الأوامر ويرسل النتيجة.</p>
+        <form id="commandForm" class="chat-form">
+          <select id="commandTargetSelect" required aria-label="الجهاز المرتبط"></select>
+          <select id="commandSelect" required aria-label="نوع الأمر">
+            <option value="/status">فحص الحالة (/status)</option>
+            <option value="/device">معلومات الجهاز (/device)</option>
+            <option value="/help">عرض المساعدة (/help)</option>
+          </select>
+          <button id="sendCommandBtn" class="primary" type="submit">إرسال الأمر</button>
+        </form>
+        <div id="commandNotice" class="notice hidden" role="status"></div>
+      </div>
+      <div class="section-heading"><div><h2>سجل الأوامر</h2><p class="muted">يُحدّث السجل تلقائيًا أثناء فتح هذا التبويب.</p></div></div>
+      <div id="commandList" class="device-list"></div>
+      <div class="notice">الحالات تعكس ما سجّله الخادم فقط. لن تظهر نتيجة فعلية حتى يستلم العميل الأمر وينفذه ويرسل النتيجة.</div>
     </section>
 
     <section id="chats" class="panel hidden">
