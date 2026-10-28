@@ -414,6 +414,67 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+let browserReceiverTimer = null;
+let browserReceiverBusy = false;
+function browserReceiverNotice(message) {
+  const box = document.querySelector("#browserReceiverNotice");
+  if (!box) return;
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+function stopBrowserReceiver() {
+  if (browserReceiverTimer !== null) window.clearInterval(browserReceiverTimer);
+  browserReceiverTimer = null;
+  const button = document.querySelector("#browserReceiverToggle");
+  if (button) button.textContent = "بدء استقبال الاختباري";
+  browserReceiverNotice("الاستقبال الاختباري متوقف.");
+}
+async function pollBrowserReceiver() {
+  if (!currentUser || !token || browserReceiverBusy || document.hidden) return;
+  browserReceiverBusy = true;
+  try {
+    const commands = await api("/api/commands/pending");
+    if (!commands.length) {
+      browserReceiverNotice("الاستقبال الاختباري يعمل — لا توجد أوامر جديدة للحساب " + currentUser.username + ".");
+      return;
+    }
+    for (const command of commands) {
+      let result;
+      if (command.command === "/status") {
+        result = {simulation:true, execution_mode:"browser_simulation", message:"تم استلام الأمر في جلسة المتصفح فقط.", account:currentUser.username, browser_session:"active", physical_device_status:"not_checked"};
+      } else if (command.command === "/device") {
+        result = {simulation:true, execution_mode:"browser_simulation", message:"هذه بيانات جلسة الويب وليست بيانات هاتف فعلي.", account:currentUser.username, client:"web-browser", physical_device_info:"not_available"};
+      } else if (command.command === "/help") {
+        result = {simulation:true, execution_mode:"browser_simulation", supported_commands:["/status","/device","/help"], message:"محاكاة استقبال الأوامر في المتصفح فقط."};
+      } else {
+        await api("/api/commands/" + command.id + "/result", {method:"POST", body:JSON.stringify({status:"failed", result:{simulation:true, execution_mode:"browser_simulation", error:"Unsupported command"}})});
+        continue;
+      }
+      await api("/api/commands/" + command.id + "/result", {method:"POST", body:JSON.stringify({status:"completed", result})});
+      browserReceiverNotice("استُلم الأمر رقم " + command.id + " (" + command.command + ") وأُرسلت نتيجة محاكاة إلى الخادم. لا يعني ذلك تنفيذًا على هاتف فعلي.");
+    }
+    await refreshCommandList();
+  } catch (error) {
+    browserReceiverNotice("تعذّر استقبال الأمر: " + (error.message || "خطأ غير معروف"));
+  } finally {
+    browserReceiverBusy = false;
+  }
+}
+document.querySelector("#browserReceiverToggle").addEventListener("click", () => {
+  if (browserReceiverTimer !== null) {
+    stopBrowserReceiver();
+    return;
+  }
+  browserReceiverNotice("جارٍ تشغيل الاستقبال الاختباري لهذه الجلسة...");
+  document.querySelector("#browserReceiverToggle").textContent = "إيقاف الاستقبال الاختباري";
+  pollBrowserReceiver();
+  browserReceiverTimer = window.setInterval(pollBrowserReceiver, 3000);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && browserReceiverTimer !== null) pollBrowserReceiver();
+});
+window.addEventListener("pagehide", stopBrowserReceiver);
+
 function commandStatusArabic(status) {
   return ({pending:"بانتظار استلام العميل", claimed:"استلمه العميل — بانتظار النتيجة", completed:"اكتمل حسب نتيجة العميل", failed:"أبلغ العميل عن فشل", expired:"انتهت الصلاحية"})[status] || status || "حالة غير معروفة";
 }
