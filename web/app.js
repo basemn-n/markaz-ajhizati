@@ -508,48 +508,70 @@ async function refreshCommandTargets() {
   document.querySelector("#sendCommandBtn").disabled = false;
   if ([...select.options].some(option => option.value === previous)) select.value = previous;
 }
+let commandListRefreshPromise = null;
 async function refreshCommandList() {
+  // Keep the currently displayed history visible while the request is in flight.
+  // Reuse an active request to prevent overlapping refreshes from racing.
+  if (commandListRefreshPromise) return commandListRefreshPromise;
   const list = document.querySelector("#commandList");
-  list.replaceChildren();
-  try {
-    const items = await api("/api/commands?limit=50");
-    if (!items.length) return emptyMessage(list, "لا توجد أوامر مسجلة حتى الآن.");
-    items.forEach(item => {
-      const card = document.createElement("article");
-      card.className = "device";
-      const icon = document.createElement("div");
-      icon.className = "device-icon";
-      icon.textContent = "⌘";
-      const info = document.createElement("div");
-      info.className = "device-info";
-      const title = document.createElement("strong");
-      title.textContent = (item.command || "أمر") + " — " + (item.target_username || "الجهاز");
-      const status = document.createElement("span");
-      status.textContent = commandStatusArabic(item.status);
-      const created = document.createElement("span");
-      created.className = "muted";
-      created.textContent = "وقت الإرسال: " + (item.created_at ? new Date(item.created_at).toLocaleString("ar") : "غير متاح");
-      info.append(title, status, created);
-      if (item.expires_at) {
-        const expiry = document.createElement("span");
-        expiry.className = "muted";
-        expiry.textContent = "تنتهي الصلاحية: " + new Date(item.expires_at).toLocaleString("ar");
-        info.append(expiry);
+  commandListRefreshPromise = (async () => {
+    try {
+      const items = await api("/api/commands?limit=50");
+      const fragment = document.createDocumentFragment();
+      if (!items.length) {
+        const message = document.createElement("p");
+        message.className = "muted";
+        message.textContent = "لا توجد أوامر مسجلة حتى الآن.";
+        fragment.append(message);
+      } else {
+        items.forEach(item => {
+          const card = document.createElement("article");
+          card.className = "device";
+          const icon = document.createElement("div");
+          icon.className = "device-icon";
+          icon.textContent = "⌘";
+          const info = document.createElement("div");
+          info.className = "device-info";
+          const title = document.createElement("strong");
+          title.textContent = (item.command || "أمر") + " — " + (item.target_username || "الجهاز");
+          const status = document.createElement("span");
+          status.textContent = commandStatusArabic(item.status);
+          const created = document.createElement("span");
+          created.className = "muted";
+          created.textContent = "وقت الإرسال: " + (item.created_at ? new Date(item.created_at).toLocaleString("ar") : "غير متاح");
+          info.append(title, status, created);
+          if (item.expires_at) {
+            const expiry = document.createElement("span");
+            expiry.className = "muted";
+            expiry.textContent = "تنتهي الصلاحية: " + new Date(item.expires_at).toLocaleString("ar");
+            info.append(expiry);
+          }
+          if (item.result && typeof item.result === "object") {
+            const result = document.createElement("pre");
+            result.className = "muted";
+            result.style.whiteSpace = "pre-wrap";
+            result.style.overflowWrap = "anywhere";
+            result.textContent = "نتيجة العميل: " + JSON.stringify(item.result, null, 2);
+            info.append(result);
+          }
+          card.append(icon, info);
+          fragment.append(card);
+        });
       }
-      if (item.result && typeof item.result === "object") {
-        const result = document.createElement("pre");
-        result.className = "muted";
-        result.style.whiteSpace = "pre-wrap";
-        result.style.overflowWrap = "anywhere";
-        result.textContent = "نتيجة العميل: " + JSON.stringify(item.result, null, 2);
-        info.append(result);
+      // Replace the visible list only after a successful response is fully rendered.
+      list.replaceChildren(fragment);
+    } catch (error) {
+      // Preserve the last known history instead of blanking it on a transient failure.
+      if (!list.children.length) {
+        emptyMessage(list, error.message || "تعذّر تحميل سجل الأوامر.");
+      } else {
+        showCommandNotice("تعذّر تحديث سجل الأوامر؛ ما زال السجل السابق ظاهرًا. " + (error.message || ""));
       }
-      card.append(icon, info);
-      list.append(card);
-    });
-  } catch (error) {
-    emptyMessage(list, error.message || "تعذّر تحميل سجل الأوامر.");
-  }
+    } finally {
+      commandListRefreshPromise = null;
+    }
+  })();
+  return commandListRefreshPromise;
 }
 async function refreshCommandsAll() {
   try { await refreshCommandTargets(); }
