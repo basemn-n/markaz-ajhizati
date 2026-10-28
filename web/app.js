@@ -407,6 +407,7 @@ function startScreenAutoRefresh() {
   }, 5000);
 }
 startScreenAutoRefresh();
+startCommandAutoRefresh();
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && currentUser) {
     const panel = document.querySelector("#screen");
@@ -414,10 +415,121 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+function commandStatusArabic(status) {
+  return ({pending:"بانتظار استلام العميل", claimed:"استلمه العميل — بانتظار النتيجة", completed:"اكتمل حسب نتيجة العميل", failed:"أبلغ العميل عن فشل", expired:"انتهت الصلاحية"})[status] || status || "حالة غير معروفة";
+}
+function showCommandNotice(message) {
+  const box = document.querySelector("#commandNotice");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+async function refreshCommandTargets() {
+  const select = document.querySelector("#commandTargetSelect");
+  const previous = select.value;
+  const items = await api("/api/pairings");
+  const approved = items.filter(item => item.status === "approved");
+  select.replaceChildren();
+  approved.forEach(item => {
+    const option = document.createElement("option");
+    option.value = String(item.target_user_id);
+    option.textContent = item.target_username || "حساب مرتبط";
+    select.append(option);
+  });
+  if (!approved.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "لا توجد أجهزة مرتبطة وموافق عليها";
+    select.append(option);
+    select.disabled = true;
+    document.querySelector("#sendCommandBtn").disabled = true;
+    return;
+  }
+  select.disabled = false;
+  document.querySelector("#sendCommandBtn").disabled = false;
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+async function refreshCommandList() {
+  const list = document.querySelector("#commandList");
+  list.replaceChildren();
+  try {
+    const items = await api("/api/commands?limit=50");
+    if (!items.length) return emptyMessage(list, "لا توجد أوامر مسجلة حتى الآن.");
+    items.forEach(item => {
+      const card = document.createElement("article");
+      card.className = "device";
+      const icon = document.createElement("div");
+      icon.className = "device-icon";
+      icon.textContent = "⌘";
+      const info = document.createElement("div");
+      info.className = "device-info";
+      const title = document.createElement("strong");
+      title.textContent = (item.command || "أمر") + " — " + (item.target_username || "الجهاز");
+      const status = document.createElement("span");
+      status.textContent = commandStatusArabic(item.status);
+      const created = document.createElement("span");
+      created.className = "muted";
+      created.textContent = "وقت الإرسال: " + (item.created_at ? new Date(item.created_at).toLocaleString("ar") : "غير متاح");
+      info.append(title, status, created);
+      if (item.expires_at) {
+        const expiry = document.createElement("span");
+        expiry.className = "muted";
+        expiry.textContent = "تنتهي الصلاحية: " + new Date(item.expires_at).toLocaleString("ar");
+        info.append(expiry);
+      }
+      if (item.result && typeof item.result === "object") {
+        const result = document.createElement("pre");
+        result.className = "muted";
+        result.style.whiteSpace = "pre-wrap";
+        result.style.overflowWrap = "anywhere";
+        result.textContent = "نتيجة العميل: " + JSON.stringify(item.result, null, 2);
+        info.append(result);
+      }
+      card.append(icon, info);
+      list.append(card);
+    });
+  } catch (error) {
+    emptyMessage(list, error.message || "تعذّر تحميل سجل الأوامر.");
+  }
+}
+async function refreshCommandsAll() {
+  try { await refreshCommandTargets(); }
+  catch (error) { showCommandNotice(error.message || "تعذّر تحميل الأجهزة المرتبطة."); }
+  await refreshCommandList();
+}
+document.querySelector("#commandForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const target = Number(document.querySelector("#commandTargetSelect").value);
+  const command = document.querySelector("#commandSelect").value;
+  const button = document.querySelector("#sendCommandBtn");
+  if (!Number.isInteger(target) || target <= 0) return showCommandNotice("اختر جهازًا مرتبطًا وموافقًا عليه أولًا.");
+  button.disabled = true;
+  try {
+    const data = await api("/api/commands", {method:"POST", body:JSON.stringify({target_user_id:target, command})});
+    showCommandNotice("تم تسجيل الأمر رقم " + data.id + " وإرساله إلى قائمة الانتظار. هذا لا يؤكد التنفيذ؛ ينتظر استلام العميل.");
+    await refreshCommandList();
+  } catch (error) {
+    showCommandNotice(error.message || "تعذّر إرسال الأمر.");
+  } finally {
+    button.disabled = false;
+    refreshCommandTargets().catch(() => {});
+  }
+});
+document.querySelector("#refreshCommandsBtn").addEventListener("click", refreshCommandsAll);
+let commandAutoRefreshTimer = null;
+function startCommandAutoRefresh() {
+  if (commandAutoRefreshTimer !== null) window.clearInterval(commandAutoRefreshTimer);
+  commandAutoRefreshTimer = window.setInterval(() => {
+    const panel = document.querySelector("#commands");
+    if (currentUser && !document.hidden && panel && !panel.classList.contains("hidden")) refreshCommandList();
+  }, 5000);
+}
+startCommandAutoRefresh();
+
 document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll(".tab[data-tab]").forEach((b) => b.classList.toggle("active", b === button));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
   if (button.dataset.tab === "screen") refreshScreenAll();
+  if (button.dataset.tab === "commands") refreshCommandsAll();
 }));
 let installPrompt = null;
 const installBtn = document.querySelector("#installBtn");
