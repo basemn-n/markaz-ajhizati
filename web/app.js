@@ -407,7 +407,6 @@ function startScreenAutoRefresh() {
   }, 5000);
 }
 startScreenAutoRefresh();
-startCommandAutoRefresh();
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && currentUser) {
     const panel = document.querySelector("#screen");
