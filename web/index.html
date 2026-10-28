@@ -109,6 +109,12 @@
         </form>
         <div id="commandNotice" class="notice hidden" role="status"></div>
       </div>
+      <div class="card" id="browserReceiverCard" style="margin-top:14px">
+        <h3>اختبار استقبال الأوامر في المتصفح</h3>
+        <p class="muted">وضع اختبار للكمبيوتر فقط: يستقبل الأوامر المسموحة ويرسل نتيجة محاكاة، ولا يقرأ حالة الهاتف الحقيقي أو ينفّذ أوامر على نظام التشغيل.</p>
+        <button id="browserReceiverToggle" class="primary" type="button">بدء استقبال الاختباري</button>
+        <div id="browserReceiverNotice" class="notice" role="status">الاستقبال الاختباري متوقف.</div>
+      </div>
       <div class="section-heading"><div><h2>سجل الأوامر</h2><p class="muted">يُحدّث السجل تلقائيًا أثناء فتح هذا التبويب.</p></div></div>
       <div id="commandList" class="device-list"></div>
       <div class="notice">الحالات تعكس ما سجّله الخادم فقط. لن تظهر نتيجة فعلية حتى يستلم العميل الأمر وينفذه ويرسل النتيجة.</div>
