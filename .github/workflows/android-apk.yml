@@ -60,7 +60,7 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
-          grep -q "package: name='com.basemn.markazajhizati.installfix' versionCode='5' versionName='0.5.0'" /tmp/apk-badging.txt
+          grep -q "package: name='com.basemn.markazajhizati.installfix' versionCode='6' versionName='0.6.0'" /tmp/apk-badging.txt
           grep -q "sdkVersion:'26'" /tmp/apk-badging.txt
           grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
