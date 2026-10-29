@@ -48,6 +48,13 @@ private data class PairItem(
     val status: String
 )
 
+private data class ChatMessageItem(
+    val id: Long,
+    val sender: String,
+    val body: String,
+    val createdAt: String
+)
+
 private data class ScreenSessionItem(
     val id: Long,
     val controllerId: Long,
@@ -203,6 +210,13 @@ private fun MarkazApp(activity: MainActivity) {
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("سجّل الدخول لربط تطبيق أندرويد بحسابك.") }
+    var activeTab by remember { mutableIntStateOf(0) }
+    var chatContacts by remember { mutableStateOf<List<String>>(emptyList()) }
+    var selectedChatUsername by remember { mutableStateOf("") }
+    var chatMessages by remember { mutableStateOf<List<ChatMessageItem>>(emptyList()) }
+    var chatDraft by remember { mutableStateOf("") }
+    var chatNotice by remember { mutableStateOf("اختر حسابًا مرتبطًا لعرض المحادثة.") }
+    var chatBusy by remember { mutableStateOf(false) }
 
     val deviceName = remember {
         val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
@@ -299,6 +313,94 @@ private fun MarkazApp(activity: MainActivity) {
                 }
             } catch (e: Exception) {
                 activity.runOnUiThread { notice = e.message ?: "تعذر تحديث طلبات الربط." }
+            }
+        }
+    }
+
+    fun refreshChatData(authToken: String) {
+        network.execute {
+            try {
+                val result = requestApi("GET", "/api/pairings", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                val parsedContacts = buildList {
+                    val array = JSONArray(result.body)
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        if (item.optString("status") == "approved") {
+                            val contact = item.optString("target_username").trim()
+                            if (contact.isNotBlank() && !contains(contact)) add(contact)
+                        }
+                    }
+                }
+                val current = selectedChatUsername
+                val chosen = if (parsedContacts.any { it.equals(current, ignoreCase = true) }) current
+                    else parsedContacts.firstOrNull().orEmpty()
+                val parsedMessages = if (chosen.isNotBlank()) {
+                    val messagesResult = requestApi(
+                        "GET", "/api/messages?with_user=" + java.net.URLEncoder.encode(chosen, "UTF-8") + "&limit=100",
+                        authToken
+                    )
+                    if (messagesResult.status !in 200..299) throw IllegalStateException(errorMessage(messagesResult))
+                    val array = JSONArray(messagesResult.body)
+                    buildList {
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            add(ChatMessageItem(item.optLong("id"), item.optString("sender"),
+                                item.optString("body"), item.optString("created_at")))
+                        }
+                    }
+                } else emptyList()
+                activity.runOnUiThread {
+                    chatContacts = parsedContacts
+                    selectedChatUsername = chosen
+                    chatMessages = parsedMessages
+                    chatNotice = if (chosen.isBlank()) "لا توجد حسابات مرتبطة وموافق عليها. اربط حسابًا أولًا."
+                        else "المحادثة مع $chosen — الرسائل محفوظة على الخادم."
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread { chatNotice = e.message ?: "تعذر تحميل المحادثات." }
+            }
+        }
+    }
+
+    fun sendChatMessage(authToken: String) {
+        val recipient = selectedChatUsername
+        val body = chatDraft.trim()
+        if (recipient.isBlank()) {
+            chatNotice = "اختر حسابًا مرتبطًا وموافقًا عليه أولًا."
+            return
+        }
+        if (body.isBlank()) return
+        chatBusy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/messages", authToken,
+                    JSONObject().put("recipient_username", recipient).put("body", body))
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                val messagesResult = requestApi(
+                    "GET", "/api/messages?with_user=" + java.net.URLEncoder.encode(recipient, "UTF-8") + "&limit=100",
+                    authToken
+                )
+                if (messagesResult.status !in 200..299) throw IllegalStateException(errorMessage(messagesResult))
+                val array = JSONArray(messagesResult.body)
+                val parsed = buildList {
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        add(ChatMessageItem(item.optLong("id"), item.optString("sender"),
+                            item.optString("body"), item.optString("created_at")))
+                    }
+                }
+                activity.runOnUiThread {
+                    chatDraft = ""
+                    chatMessages = parsed
+                    chatNotice = "تم إرسال الرسالة إلى $recipient."
+                    chatBusy = false
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    chatNotice = e.message ?: "تعذر إرسال الرسالة."
+                    chatBusy = false
+                }
             }
         }
     }
@@ -485,6 +587,35 @@ private fun MarkazApp(activity: MainActivity) {
         }
     }
 
+    LaunchedEffect(token, activeTab, selectedChatUsername) {
+        val authToken = token ?: return@LaunchedEffect
+        if (activeTab != 1 || selectedChatUsername.isBlank()) return@LaunchedEffect
+        while (true) {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    val result = requestApi(
+                        "GET", "/api/messages?with_user=" +
+                            java.net.URLEncoder.encode(selectedChatUsername, "UTF-8") + "&limit=100",
+                        authToken
+                    )
+                    if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                    val array = JSONArray(result.body)
+                    buildList {
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            add(ChatMessageItem(item.optLong("id"), item.optString("sender"),
+                                item.optString("body"), item.optString("created_at")))
+                        }
+                    }
+                }
+                chatMessages = parsed
+            } catch (e: Exception) {
+                chatNotice = e.message ?: "تعذر تحديث الرسائل."
+            }
+            delay(5000)
+        }
+    }
+
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Color(0xFF315DA8),
@@ -574,6 +705,14 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
+                    TabRow(selectedTabIndex = activeTab) {
+                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("الأجهزة") })
+                        Tab(selected = activeTab == 1, onClick = {
+                            activeTab = 1
+                            token?.let { refreshChatData(it) }
+                        }, text = { Text("المحادثات") })
+                    }
+                    if (activeTab == 0) {
                     Text("الأجهزة المسجلة في الحساب", fontSize = 19.sp, fontWeight = FontWeight.Bold)
                     if (devices.isEmpty()) {
                         Text("لا توجد أجهزة مسجلة بعد.")
@@ -709,6 +848,84 @@ private fun MarkazApp(activity: MainActivity) {
                         }
                     }
                     Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    } else {
+                        Text("المحادثات", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("راسل الحسابات التي وافقت على ربطها بحسابك. لا يمكن مراسلة حساب غير مرتبط.",
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("الحساب المرتبط", fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { token?.let { refreshChatData(it) } }, enabled = !chatBusy) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Text("تحديث")
+                            }
+                        }
+                        if (chatContacts.isEmpty()) {
+                            Card(shape = RoundedCornerShape(14.dp)) {
+                                Text("لا توجد حسابات مرتبطة وموافق عليها. افتح تبويب الأجهزة لإرسال طلب ربط أو الموافقة عليه.",
+                                    modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            var contactMenuExpanded by remember { mutableStateOf(false) }
+                            Box {
+                                OutlinedButton(onClick = { contactMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Text(selectedChatUsername.ifBlank { "اختر حسابًا" })
+                                }
+                                DropdownMenu(expanded = contactMenuExpanded, onDismissRequest = { contactMenuExpanded = false }) {
+                                    chatContacts.forEach { contact ->
+                                        DropdownMenuItem(text = { Text(contact) }, onClick = {
+                                            selectedChatUsername = contact
+                                            chatMessages = emptyList()
+                                            contactMenuExpanded = false
+                                        })
+                                    }
+                                }
+                            }
+                            Card(shape = RoundedCornerShape(16.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (chatMessages.isEmpty()) {
+                                        Text("لا توجد رسائل بعد. ابدأ المحادثة برسالة جديدة.",
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 30.dp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    } else {
+                                        chatMessages.forEach { message ->
+                                            val mine = message.sender.equals(signedInUsername, ignoreCase = true)
+                                            Row(Modifier.fillMaxWidth(),
+                                                horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+                                                Card(
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    colors = CardDefaults.cardColors(containerColor =
+                                                        if (mine) Color(0xFFE3EDFF) else Color(0xFFF0F2F5)),
+                                                    modifier = Modifier.fillMaxWidth(0.88f)
+                                                ) {
+                                                    Column(Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                                        Text(message.body, color = Color(0xFF1F2937))
+                                                        Text((if (mine) "أنت" else message.sender) +
+                                                            if (message.createdAt.isNotBlank()) " · " + message.createdAt.replace("T", " ").take(16) else "",
+                                                            fontSize = 10.sp, color = Color.DarkGray)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = chatDraft, onValueChange = { chatDraft = it.take(4000) },
+                                modifier = Modifier.fillMaxWidth(), label = { Text("اكتب رسالتك...") },
+                                enabled = !chatBusy, maxLines = 4
+                            )
+                            Button(onClick = { token?.let { sendChatMessage(it) } },
+                                enabled = !chatBusy && chatDraft.isNotBlank() && selectedChatUsername.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(if (chatBusy) "جارٍ الإرسال..." else "إرسال")
+                            }
+                            Text("تُحدّث الرسائل تلقائيًا كل 5 ثوانٍ أثناء فتح المحادثة.",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(chatNotice, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
