@@ -610,7 +610,15 @@ private fun MarkazApp(activity: MainActivity) {
                 }
                 chatMessages = parsed
             } catch (e: Exception) {
-                chatNotice = e.message ?: "تعذر تحديث الرسائل."
+                val reason = e.message ?: "تعذر تحديث الرسائل."
+                if (reason.contains("approved device link", ignoreCase = true)) {
+                    chatMessages = emptyList()
+                    chatContacts = emptyList()
+                    selectedChatUsername = ""
+                    chatNotice = "تم إلغاء الربط أو لم يعد الحساب مخولًا للمحادثة."
+                } else {
+                    chatNotice = reason
+                }
             }
             delay(5000)
         }
@@ -696,6 +704,11 @@ private fun MarkazApp(activity: MainActivity) {
                                     token = null
                                     signedInUsername = ""
                                     devices = emptyList()
+                                    activeTab = 0
+                                    chatContacts = emptyList()
+                                    selectedChatUsername = ""
+                                    chatMessages = emptyList()
+                                    chatDraft = ""
                                     notice = "تم تسجيل الخروج من التطبيق."
                                 }, enabled = !busy) {
                                     Icon(Icons.Default.Logout, contentDescription = null)
