@@ -530,6 +530,15 @@ def send_message(payload: MessageCreate, user: CurrentUser):
             raise HTTPException(status_code=404, detail="Recipient account not found")
         if recipient["id"] == user["id"]:
             raise HTTPException(status_code=422, detail="Cannot send a message to the same account")
+        approved_link = db.execute(
+            """SELECT id FROM device_links
+               WHERE status='approved'
+                 AND ((controller_id=? AND target_id=?) OR (controller_id=? AND target_id=?))
+               LIMIT 1""",
+            (user["id"], recipient["id"], recipient["id"], user["id"]),
+        ).fetchone()
+        if not approved_link:
+            raise HTTPException(status_code=403, detail="An approved device link is required to message this account")
         cur = db.execute(
             "INSERT INTO messages(sender_id, recipient_id, body, created_at) VALUES(?,?,?,?) RETURNING id",
             (user["id"], recipient["id"], payload.body.strip(), now()),
@@ -555,6 +564,17 @@ def get_messages(
                            (with_user.strip(),)).fetchone()
         if not other:
             raise HTTPException(status_code=404, detail="Account not found")
+        if int(other["id"]) == int(user["id"]):
+            raise HTTPException(status_code=422, detail="Cannot open a conversation with the same account")
+        approved_link = db.execute(
+            """SELECT id FROM device_links
+               WHERE status='approved'
+                 AND ((controller_id=? AND target_id=?) OR (controller_id=? AND target_id=?))
+               LIMIT 1""",
+            (user["id"], other["id"], other["id"], user["id"]),
+        ).fetchone()
+        if not approved_link:
+            raise HTTPException(status_code=403, detail="An approved device link is required to read this conversation")
         rows = db.execute(
             """SELECT m.id, s.username AS sender, r.username AS recipient, m.body, m.created_at
                FROM messages m JOIN users s ON s.id=m.sender_id
