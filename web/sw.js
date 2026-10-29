@@ -1,4 +1,4 @@
-const CACHE='markaz-pwa-v8';
+const CACHE='markaz-pwa-v9';
 const ASSETS=['./','./index.html','./styles.css','./app.js','./manifest.webmanifest','./icon.svg','./icon-192.svg','./icon-512.svg'];
 
 self.addEventListener('install', event => {
