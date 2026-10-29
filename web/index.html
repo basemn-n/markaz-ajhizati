@@ -121,8 +121,20 @@
     </section>
 
     <section id="chats" class="panel hidden">
-      <div class="section-heading"><div><h2>المحادثات</h2><p class="muted">واجهة الرسائل ستُوصل في المرحلة التالية.</p></div></div>
-      <div class="card"><p class="muted">المراسلة الفعلية غير مفعّلة في هذه المرحلة، لذلك لن نعرض رسائل تجريبية على أنها رسائل حقيقية.</p></div>
+      <div class="section-heading"><div><h2>المحادثات</h2><p class="muted">راسل الحسابات التي وافقت على ربطها بحسابك. لا يمكن مراسلة حساب غير مرتبط.</p></div><button id="refreshChatsBtn" class="secondary" type="button">تحديث المحادثة</button></div>
+      <div class="card chat-workspace">
+        <div class="chat-toolbar">
+          <label for="chatContactSelect">الحساب المرتبط</label>
+          <select id="chatContactSelect" aria-label="اختر حسابًا مرتبطًا"></select>
+        </div>
+        <div id="chatNotice" class="notice" role="status">اختر حسابًا مرتبطًا لعرض المحادثة.</div>
+        <div id="messageList" class="message-list" aria-live="polite"></div>
+        <form id="messageForm" class="chat-form">
+          <input id="messageInput" type="text" maxlength="4000" required placeholder="اكتب رسالتك..." autocomplete="off" aria-label="نص الرسالة">
+          <button id="sendMessageBtn" class="primary" type="submit">إرسال</button>
+        </form>
+        <p class="muted chat-footnote">تُحدّث الرسائل تلقائيًا كل 5 ثوانٍ أثناء فتح المحادثة.</p>
+      </div>
     </section>
   </main>
 
