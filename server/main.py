@@ -178,6 +178,11 @@ def init_db() -> None:
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS android_presence (
+            user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            last_seen_at TEXT NOT NULL,
+            device_name TEXT NOT NULL DEFAULT ''
+        );
         """
     else:
         schema = """
@@ -267,6 +272,11 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS user_presence (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             last_seen_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS android_presence (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            last_seen_at TEXT NOT NULL,
+            device_name TEXT NOT NULL DEFAULT ''
         );
         """
     with connect() as db:
@@ -837,6 +847,25 @@ def decide_pairing(pairing_id: int, payload: PairingDecision, user: CurrentUser)
     return {"id": pairing_id, "status": status}
 
 
+@app.post("/api/android/presence")
+def android_presence_heartbeat(user: CurrentUser):
+    """Record a heartbeat sent only by the authenticated Android client."""
+    seen_at = now()
+    with connect() as db:
+        existing = db.execute("SELECT user_id FROM android_presence WHERE user_id=?", (user["id"],)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE android_presence SET last_seen_at=?, device_name=? WHERE user_id=?",
+                (seen_at, "Android client", user["id"]),
+            )
+        else:
+            db.execute(
+                "INSERT INTO android_presence(user_id, last_seen_at, device_name) VALUES(?,?,?)",
+                (user["id"], seen_at, "Android client"),
+            )
+    return {"ok": True, "client": "android", "last_seen_at": seen_at}
+
+
 @app.post("/api/presence/heartbeat")
 def presence_heartbeat(user: CurrentUser):
     """Record that this account's web/PWA session is currently active."""
@@ -858,15 +887,19 @@ def list_pairings(user: CurrentUser):
             """SELECT l.id, l.status, l.created_at, l.approved_at,
                       CASE WHEN l.controller_id=? THEN target.id ELSE controller.id END AS target_user_id,
                       CASE WHEN l.controller_id=? THEN target.username ELSE controller.username END AS target_username,
-                      p.last_seen_at AS last_seen_at
+                      p.last_seen_at AS last_seen_at,
+                      ap.last_seen_at AS android_last_seen_at,
+                      ap.device_name AS android_device_name
                FROM device_links l
                JOIN users controller ON controller.id=l.controller_id
                JOIN users target ON target.id=l.target_id
                LEFT JOIN user_presence p
                  ON p.user_id = CASE WHEN l.controller_id=? THEN l.target_id ELSE l.controller_id END
+               LEFT JOIN android_presence ap
+                 ON ap.user_id = CASE WHEN l.controller_id=? THEN l.target_id ELSE l.controller_id END
                WHERE l.controller_id=? OR l.target_id=?
                ORDER BY l.id DESC""",
-            (user["id"], user["id"], user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     result = []
     current_time = datetime.now(timezone.utc)
@@ -892,6 +925,17 @@ def list_pairings(user: CurrentUser):
             except (TypeError, ValueError):
                 is_online = False
         item["session_status"] = "active" if is_online else "inactive"
+        android_seen = item.get("android_last_seen_at")
+        android_online = False
+        if android_seen:
+            try:
+                android_dt = datetime.fromisoformat(str(android_seen).replace("Z", "+00:00"))
+                if android_dt.tzinfo is None:
+                    android_dt = android_dt.replace(tzinfo=timezone.utc)
+                android_online = (current_time - android_dt).total_seconds() <= 30
+            except (TypeError, ValueError):
+                android_online = False
+        item["android_session_status"] = "active" if android_online else "inactive"
         result.append(item)
     return result
 
