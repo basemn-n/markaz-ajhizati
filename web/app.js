@@ -177,6 +177,14 @@ function renderLinkList(items) {
         ? "جلسة الموقع نشطة الآن — لا تؤكد اتصال تطبيق أندرويد"
         : (item.last_seen_at ? "آخر نشاط للموقع: " + new Date(item.last_seen_at).toLocaleString("ar") + " — اتصال أندرويد غير مؤكد" : "لم يسجل الموقع أو تطبيق أندرويد نشاطًا بعد");
       info.append(presence);
+      const androidPresence = document.createElement("span");
+      androidPresence.className = "presence-status " + (item.android_session_status === "active" ? "is-active" : "is-inactive");
+      androidPresence.textContent = item.android_session_status === "active"
+        ? "تطبيق أندرويد متصل الآن ويُرسل نبض الاتصال"
+        : (item.android_last_seen_at
+          ? "آخر اتصال لتطبيق أندرويد: " + new Date(item.android_last_seen_at).toLocaleString("ar")
+          : "تطبيق أندرويد غير متصل أو لم يسجل اتصالًا بعد");
+      info.append(androidPresence);
     }
     card.append(icon, info);
     if (item.status === "approved") {
