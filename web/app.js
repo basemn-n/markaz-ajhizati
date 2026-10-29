@@ -663,11 +663,130 @@ function startCommandAutoRefresh() {
 }
 startCommandAutoRefresh();
 
+
+function showChatNotice(message) {
+  const box = document.querySelector("#chatNotice");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+function selectedChatUsername() {
+  const select = document.querySelector("#chatContactSelect");
+  return select && !select.disabled ? select.value : "";
+}
+async function refreshChatContacts() {
+  const select = document.querySelector("#chatContactSelect");
+  const previous = select.value;
+  const items = await api("/api/pairings");
+  const approved = items.filter(item => item.status === "approved");
+  select.replaceChildren();
+  approved.forEach(item => {
+    const option = document.createElement("option");
+    option.value = item.target_username;
+    option.textContent = item.target_username;
+    select.append(option);
+  });
+  const hasContacts = approved.length > 0;
+  select.disabled = !hasContacts;
+  document.querySelector("#messageInput").disabled = !hasContacts;
+  document.querySelector("#sendMessageBtn").disabled = !hasContacts;
+  if (!hasContacts) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "لا توجد حسابات مرتبطة وموافق عليها";
+    select.append(option);
+    document.querySelector("#messageList").replaceChildren();
+    showChatNotice("لا توجد محادثات متاحة. اربط حسابًا أولًا وانتظر موافقة صاحبه.");
+    return "";
+  }
+  if (approved.some(item => item.target_username === previous)) select.value = previous;
+  else select.selectedIndex = 0;
+  return select.value;
+}
+async function refreshMessages() {
+  const username = selectedChatUsername();
+  const list = document.querySelector("#messageList");
+  if (!username) return;
+  try {
+    const items = await api("/api/messages?with_user=" + encodeURIComponent(username) + "&limit=100");
+    const fragment = document.createDocumentFragment();
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted chat-empty";
+      empty.textContent = "لا توجد رسائل بعد. ابدأ المحادثة برسالة جديدة.";
+      fragment.append(empty);
+    } else {
+      items.forEach(item => {
+        const bubble = document.createElement("article");
+        const mine = item.sender === currentUser?.username;
+        bubble.className = "message-bubble " + (mine ? "message-mine" : "message-theirs");
+        const body = document.createElement("p");
+        body.textContent = item.body || "";
+        const meta = document.createElement("span");
+        meta.textContent = (mine ? "أنت" : item.sender) + " · " + (item.created_at ? new Date(item.created_at).toLocaleString("ar") : "");
+        bubble.append(body, meta);
+        fragment.append(bubble);
+      });
+    }
+    list.replaceChildren(fragment);
+    list.scrollTop = list.scrollHeight;
+    showChatNotice("المحادثة مع " + username + " — الرسائل محفوظة على الخادم.");
+  } catch (error) {
+    showChatNotice("تعذّر تحميل الرسائل: " + (error.message || "خطأ غير معروف"));
+  }
+}
+async function refreshChatsAll() {
+  try {
+    const before = selectedChatUsername();
+    const selected = await refreshChatContacts();
+    if (selected && selected === before) await refreshMessages();
+    else if (selected) await refreshMessages();
+  } catch (error) {
+    showChatNotice("تعذّر تحميل الحسابات المرتبطة: " + (error.message || "خطأ غير معروف"));
+  }
+}
+document.querySelector("#chatContactSelect").addEventListener("change", refreshMessages);
+document.querySelector("#refreshChatsBtn").addEventListener("click", refreshChatsAll);
+document.querySelector("#messageForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const username = selectedChatUsername();
+  const input = document.querySelector("#messageInput");
+  const button = document.querySelector("#sendMessageBtn");
+  const body = input.value.trim();
+  if (!username) return showChatNotice("اختر حسابًا مرتبطًا وموافقًا عليه أولًا.");
+  if (!body) return;
+  button.disabled = true;
+  try {
+    await api("/api/messages", {method:"POST", body:JSON.stringify({recipient_username:username, body})});
+    input.value = "";
+    await refreshMessages();
+  } catch (error) {
+    showChatNotice("تعذّر إرسال الرسالة: " + (error.message || "خطأ غير معروف"));
+  } finally {
+    button.disabled = false;
+  }
+});
+let chatAutoRefreshTimer = null;
+function startChatAutoRefresh() {
+  if (chatAutoRefreshTimer !== null) window.clearInterval(chatAutoRefreshTimer);
+  chatAutoRefreshTimer = window.setInterval(() => {
+    const panel = document.querySelector("#chats");
+    if (currentUser && !document.hidden && panel && !panel.classList.contains("hidden")) refreshMessages();
+  }, 5000);
+}
+startChatAutoRefresh();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentUser) {
+    const panel = document.querySelector("#chats");
+    if (panel && !panel.classList.contains("hidden")) refreshChatsAll();
+  }
+});
+
 document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll(".tab[data-tab]").forEach((b) => b.classList.toggle("active", b === button));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
   if (button.dataset.tab === "screen") refreshScreenAll();
   if (button.dataset.tab === "commands") refreshCommandsAll();
+  if (button.dataset.tab === "chats") refreshChatsAll();
 }));
 let installPrompt = null;
 const installBtn = document.querySelector("#installBtn");
