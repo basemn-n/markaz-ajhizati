@@ -11,7 +11,7 @@ permissions:
 jobs:
   android-release-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       HAS_STABLE_SIGNING: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
     steps:
@@ -64,6 +64,13 @@ jobs:
           grep -q "sdkVersion:'26'" /tmp/apk-badging.txt
           grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+
       - name: Boot Android emulator and install/launch APK
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -71,8 +78,11 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: false
+          emulator-boot-timeout: 900
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
           script: |
             adb install app/build/outputs/apk/release/app-release.apk
             adb shell am start -n com.basemn.markazajhizati.installfix/com.example.markaz.MainActivity
