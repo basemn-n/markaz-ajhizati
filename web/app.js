@@ -475,8 +475,20 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", stopBrowserReceiver);
 
-function commandStatusArabic(status) {
-  return ({pending:"بانتظار استلام العميل", claimed:"استلمه العميل — بانتظار النتيجة", completed:"اكتمل حسب نتيجة العميل", failed:"أبلغ العميل عن فشل", expired:"انتهت الصلاحية"})[status] || status || "حالة غير معروفة";
+function commandStatusArabic(item) {
+  const status = item?.status || item;
+  const labels = {
+    pending: "لم يستلمه أي عميل بعد — في قائمة الانتظار",
+    claimed: "استلمه عميل — ننتظر النتيجة",
+    completed: "أرسل العميل نتيجة مكتملة",
+    failed: "أرسل العميل نتيجة فشل",
+    expired: "انتهت صلاحية الأمر دون نتيجة"
+  };
+  const label = labels[status] || status || "حالة غير معروفة";
+  if (item && typeof item === "object" && item.result?.simulation === true) {
+    return label + " — نتيجة محاكاة من المتصفح وليست من الهاتف";
+  }
+  return label;
 }
 function showCommandNotice(message) {
   const box = document.querySelector("#commandNotice");
@@ -535,7 +547,7 @@ async function refreshCommandList() {
           const title = document.createElement("strong");
           title.textContent = (item.command || "أمر") + " — " + (item.target_username || "الجهاز");
           const status = document.createElement("span");
-          status.textContent = commandStatusArabic(item.status);
+          status.textContent = commandStatusArabic(item);
           const created = document.createElement("span");
           created.className = "muted";
           created.textContent = "وقت الإرسال: " + (item.created_at ? new Date(item.created_at).toLocaleString("ar") : "غير متاح");
