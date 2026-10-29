@@ -106,6 +106,17 @@ private fun errorMessage(result: ApiResult): String {
  * This function must be called from Dispatchers.IO, never from the Compose UI thread.
  */
 private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
+    // A dedicated heartbeat distinguishes the Android client from an open web session.
+    try {
+        requestApi(
+            "POST",
+            "/api/android/presence",
+            authToken,
+            JSONObject().put("device_name", deviceName)
+        )
+    } catch (_: Exception) {
+        // Presence is best-effort; command polling continues independently.
+    }
     val poll = requestApi("GET", "/api/commands/pending", authToken)
     if (poll.status !in 200..299) return
 
