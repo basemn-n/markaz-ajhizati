@@ -174,8 +174,8 @@ function renderLinkList(items) {
       const presence = document.createElement("span");
       presence.className = "presence-status " + (item.session_status === "active" ? "is-active" : "is-inactive");
       presence.textContent = item.session_status === "active"
-        ? "جلسة التطبيق نشطة الآن"
-        : (item.last_seen_at ? "آخر نشاط للتطبيق: " + new Date(item.last_seen_at).toLocaleString("ar") : "لم يسجل التطبيق نشاطًا بعد");
+        ? "جلسة الموقع نشطة الآن — لا تؤكد اتصال تطبيق أندرويد"
+        : (item.last_seen_at ? "آخر نشاط للموقع: " + new Date(item.last_seen_at).toLocaleString("ar") + " — اتصال أندرويد غير مؤكد" : "لم يسجل الموقع أو تطبيق أندرويد نشاطًا بعد");
       info.append(presence);
     }
     card.append(icon, info);
