@@ -521,6 +521,44 @@ async function refreshCommandTargets() {
   if ([...select.options].some(option => option.value === previous)) select.value = previous;
 }
 let commandListRefreshPromise = null;
+function commandResultSource(result) {
+  if (result?.simulation === true || result?.execution_mode === "browser_simulation") return "محاكاة المتصفح — ليست من الهاتف";
+  if (result?.app === "markaz-ajhizati-android") return "تطبيق أندرويد — نتيجة من العميل";
+  return "مصدر النتيجة غير محدد";
+}
+function renderCommandResult(result) {
+  const wrap = document.createElement("div");
+  wrap.className = "command-result";
+  const source = document.createElement("strong");
+  source.textContent = commandResultSource(result);
+  wrap.append(source);
+  const fields = [
+    ["message", "الرسالة"], ["error", "الخطأ"], ["device_name", "اسم الجهاز"],
+    ["manufacturer", "الشركة"], ["model", "الموديل"],
+    ["android_version", "إصدار أندرويد"], ["sdk_int", "مستوى النظام"]
+  ];
+  fields.forEach(([key, label]) => {
+    if (result[key] === undefined || result[key] === null || result[key] === "") return;
+    const line = document.createElement("div");
+    line.textContent = label + ": " + String(result[key]);
+    wrap.append(line);
+  });
+  if (result.online === true) {
+    const line = document.createElement("div");
+    line.textContent = "الاتصال: متصل وقت تنفيذ الفحص";
+    wrap.append(line);
+  }
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = "عرض البيانات الخام";
+  const raw = document.createElement("pre");
+  raw.textContent = JSON.stringify(result, null, 2);
+  raw.style.whiteSpace = "pre-wrap";
+  raw.style.overflowWrap = "anywhere";
+  details.append(summary, raw);
+  wrap.append(details);
+  return wrap;
+}
 async function refreshCommandList() {
   // Keep the currently displayed history visible while the request is in flight.
   // Reuse an active request to prevent overlapping refreshes from racing.
@@ -559,12 +597,10 @@ async function refreshCommandList() {
             info.append(expiry);
           }
           if (item.result && typeof item.result === "object") {
-            const result = document.createElement("pre");
-            result.className = "muted";
-            result.style.whiteSpace = "pre-wrap";
-            result.style.overflowWrap = "anywhere";
-            result.textContent = "نتيجة العميل: " + JSON.stringify(item.result, null, 2);
-            info.append(result);
+            const resultHeading = document.createElement("span");
+            resultHeading.className = "muted";
+            resultHeading.textContent = "نتيجة التنفيذ:";
+            info.append(resultHeading, renderCommandResult(item.result));
           }
           card.append(icon, info);
           fragment.append(card);
