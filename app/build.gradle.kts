@@ -11,7 +11,7 @@ android {
         // New package id isolates this install from earlier test builds/signatures.
         applicationId = "com.basemn.markazajhizati.mobile"
         minSdk = 23
-        targetSdk = 32
+        targetSdk = 35
         versionCode = 8
         versionName = "0.8.0"
     }
