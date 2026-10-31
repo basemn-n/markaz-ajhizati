@@ -9,11 +9,11 @@ android {
     compileSdk = 35
     defaultConfig {
         // New package id isolates this install from earlier test builds/signatures.
-        applicationId = "com.basemn.markazajhizati.mobile"
+        applicationId = "com.basemn.markazajhizati.mobile.compat"
         minSdk = 23
-        targetSdk = 35
-        versionCode = 8
-        versionName = "0.8.0"
+        targetSdk = 32
+        versionCode = 9
+        versionName = "0.8.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -21,6 +21,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // Legacy native-library packaging for broader OEM installer compatibility.
+    packaging { jniLibs.useLegacyPackaging = true }
 
     // Internal test build uses Android's debug signing unless a persistent release key is configured.
     val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
