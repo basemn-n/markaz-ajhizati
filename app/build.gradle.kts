@@ -21,6 +21,10 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // This APK is a direct-install compatibility test, not a Play Store release.
+    // Keep targetSdk 32 for this device test and suppress only the Play Store policy lint.
+    lint { disable += "ExpiredTargetSdkVersion" }
+
     // Legacy native-library packaging for broader OEM installer compatibility.
     packaging { jniLibs.useLegacyPackaging = true }
 
