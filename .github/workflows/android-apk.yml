@@ -62,7 +62,7 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
           grep -q "package: name='com.basemn.markazajhizati.mobile' versionCode='8' versionName='0.8.0'" /tmp/apk-badging.txt
           grep -q "sdkVersion:'23'" /tmp/apk-badging.txt
-          grep -q "targetSdkVersion:'32'" /tmp/apk-badging.txt
+          grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
       - name: Enable KVM for Android emulator
         run: |
