@@ -8,24 +8,21 @@ android {
     namespace = "com.example.markaz"
     compileSdk = 35
     defaultConfig {
-        // Unique package avoids a signature/package conflict with earlier test builds.
-        applicationId = "com.basemn.markazajhizati.installfix"
-        minSdk = 26
-        targetSdk = 33
-        versionCode = 7
-        versionName = "0.7.0"
+        // New package id isolates this install from earlier test builds/signatures.
+        applicationId = "com.basemn.markazajhizati.mobile"
+        minSdk = 23
+        targetSdk = 32
+        versionCode = 8
+        versionName = "0.8.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
 
-    // Use a persistent private keystore when GitHub Actions secrets are configured.
-    // Until then, keep debug signing only for internal test builds.
+    // Internal test build uses Android's debug signing unless a persistent release key is configured.
     val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
     val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
     val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
