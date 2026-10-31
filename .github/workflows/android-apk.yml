@@ -60,9 +60,9 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
-          grep -q "package: name='com.basemn.markazajhizati.installfix' versionCode='7' versionName='0.7.0'" /tmp/apk-badging.txt
-          grep -q "sdkVersion:'26'" /tmp/apk-badging.txt
-          grep -q "targetSdkVersion:'33'" /tmp/apk-badging.txt
+          grep -q "package: name='com.basemn.markazajhizati.mobile' versionCode='8' versionName='0.8.0'" /tmp/apk-badging.txt
+          grep -q "sdkVersion:'23'" /tmp/apk-badging.txt
+          grep -q "targetSdkVersion:'32'" /tmp/apk-badging.txt
 
       - name: Enable KVM for Android emulator
         run: |
@@ -85,14 +85,14 @@ jobs:
           disable-animations: true
           script: |
             adb install app/build/outputs/apk/release/app-release.apk
-            adb shell am start -n com.basemn.markazajhizati.installfix/com.example.markaz.MainActivity
+            adb shell am start -n com.basemn.markazajhizati.mobile/com.example.markaz.MainActivity
             sleep 3
-            adb shell pidof com.basemn.markazajhizati.installfix
+            adb shell pidof com.basemn.markazajhizati.mobile
 
       - name: Upload install-tested APK
         uses: actions/upload-artifact@v4
         with:
-          name: markaz-ajhizati-installfix-apk
+          name: markaz-ajhizati-mobile-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
