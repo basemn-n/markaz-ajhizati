@@ -11,9 +11,9 @@ android {
         // Unique package avoids a signature/package conflict with earlier test builds.
         applicationId = "com.basemn.markazajhizati.installfix"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        targetSdk = 33
+        versionCode = 7
+        versionName = "0.7.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
