@@ -166,9 +166,20 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
                         .put("sdk_int", Build.VERSION.SDK_INT)
                     "completed"
                 }
+                "/sync" -> {
+                    resultPayload
+                        .put("device_name", deviceName)
+                        .put("manufacturer", Build.MANUFACTURER.orEmpty())
+                        .put("model", Build.MODEL.orEmpty())
+                        .put("android_version", Build.VERSION.RELEASE.orEmpty())
+                        .put("sdk_int", Build.VERSION.SDK_INT)
+                        .put("app_version", packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown")
+                        .put("synced_at", System.currentTimeMillis())
+                    "completed"
+                }
                 "/help" -> {
                     resultPayload
-                        .put("commands", JSONArray(listOf("/status", "/device", "/help")))
+                        .put("commands", JSONArray(listOf("/status", "/device", "/sync", "/help")))
                         .put("message", "هذه أوامر معلوماتية فقط؛ لا تنفذ أوامر نظام أو تتحكم بالجهاز.")
                     "completed"
                 }
