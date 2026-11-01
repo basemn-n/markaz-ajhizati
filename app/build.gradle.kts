@@ -12,8 +12,8 @@ android {
         applicationId = "com.basemn.markazajhizati.mobile.compat"
         minSdk = 23
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.8.4"
+        versionCode = 13
+        versionName = "0.8.5"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
