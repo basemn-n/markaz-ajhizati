@@ -219,7 +219,7 @@ class MainActivity : ComponentActivity() {
                 connection.disconnect()
                 val release = JSONObject(response)
                 val latest = release.optString("tag_name").removePrefix("android-v")
-                val current = BuildConfig.VERSION_NAME
+                val current = packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0"
                 val assetArray = release.optJSONArray("assets") ?: JSONArray()
                 var apkUrl = ""
                 for (i in 0 until assetArray.length()) {
