@@ -224,7 +224,7 @@ class MainActivity : ComponentActivity() {
                 var apkUrl = ""
                 for (i in 0 until assetArray.length()) {
                     val asset = assetArray.optJSONObject(i) ?: continue
-                    if (asset.optString("name") == "markaz-ajhizati.apk") {
+                    if (asset.optString("name") == "app-release.apk") {
                         apkUrl = asset.optString("browser_download_url")
                         break
                     }
