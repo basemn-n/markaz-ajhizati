@@ -85,7 +85,7 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
-          grep -q "package: name='com.basemn.markazajhizati.mobile.compat' versionCode='11' versionName='0.8.3'" /tmp/apk-badging.txt
+          grep -q "package: name='com.basemn.markazajhizati.mobile.compat' versionCode='12' versionName='0.8.4'" /tmp/apk-badging.txt
           grep -q "sdkVersion:'23'" /tmp/apk-badging.txt
           grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
@@ -121,3 +121,15 @@ jobs:
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish Android release for in-app updates
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v0.8.4
+          name: مركز أجهزتي Android 0.8.4
+          body: |
+            إصدار أندرويد 0.8.4
+            versionCode: 12
+            التحديثات عبر فاحص التحديث داخل التطبيق.
+          files: app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
