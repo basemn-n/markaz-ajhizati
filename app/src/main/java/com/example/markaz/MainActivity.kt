@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                     } else if (apkUrl.isBlank()) {
                         Toast.makeText(this, "يوجد إصدار $latest لكن ملف التثبيت غير متاح بعد.", Toast.LENGTH_LONG).show()
                     } else {
-                        androidx.appcompat.app.AlertDialog.Builder(this)
+                        android.app.AlertDialog.Builder(this)
                             .setTitle("تحديث جديد متاح")
                             .setMessage("الإصدار الحالي $current والجديد $latest. سيتم تنزيل التحديث ثم يطلب أندرويد موافقتك على التثبيت.")
                             .setNegativeButton("لاحقًا", null)
@@ -251,6 +251,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun downloadUpdate(url: String) {
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(this, "اسمح للتطبيق بتثبيت التحديثات من هذا المصدر ثم اضغط فحص التحديث مرة أخرى.", Toast.LENGTH_LONG).show()
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName")))
+            return
+        }
         try {
             val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val request = DownloadManager.Request(Uri.parse(url))
