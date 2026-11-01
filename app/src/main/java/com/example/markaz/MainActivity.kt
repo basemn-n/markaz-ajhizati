@@ -204,10 +204,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { MarkazApp(this) }
+        window.decorView.post { checkForAppUpdate(false) }
     }
 
-    fun checkForAppUpdate() {
-        Toast.makeText(this, "جارٍ فحص التحديثات...", Toast.LENGTH_SHORT).show()
+    fun checkForAppUpdate(showStatus: Boolean = true) {
+        if (showStatus) Toast.makeText(this, "جارٍ فحص التحديثات...", Toast.LENGTH_SHORT).show()
         network.execute {
             try {
                 val connection = URL("https://api.github.com/repos/basemn-n/markaz-ajhizati/releases/latest").openConnection() as HttpURLConnection
@@ -230,7 +231,7 @@ class MainActivity : ComponentActivity() {
                 }
                 runOnUiThread {
                     if (latest.isBlank() || compareVersions(latest, current) <= 0) {
-                        Toast.makeText(this, "التطبيق محدّث بالفعل — الإصدار $current", Toast.LENGTH_LONG).show()
+                        if (showStatus) Toast.makeText(this, "التطبيق محدّث بالفعل — الإصدار $current", Toast.LENGTH_LONG).show()
                     } else if (apkUrl.isBlank()) {
                         Toast.makeText(this, "يوجد إصدار $latest لكن ملف التثبيت غير متاح بعد.", Toast.LENGTH_LONG).show()
                     } else {
@@ -244,7 +245,7 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this, "تعذّر فحص التحديث: ${e.message ?: "تحقق من الإنترنت"}", Toast.LENGTH_LONG).show()
+                    if (showStatus) Toast.makeText(this, "تعذّر فحص التحديث: ${e.message ?: "تحقق من الإنترنت"}", Toast.LENGTH_LONG).show()
                 }
             }
         }
