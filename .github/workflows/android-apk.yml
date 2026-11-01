@@ -44,6 +44,35 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/markaz-ajhizati-release.jks"
           test -s "$RUNNER_TEMP/markaz-ajhizati-release.jks"
 
+      - name: Generate one-time persistent signing keystore for manual download
+        if: ${{ env.HAS_STABLE_SIGNING != 'true' }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo "::error::Add the repository secret ANDROID_KEYSTORE_PASSWORD before running this workflow."
+            exit 1
+          fi
+          keytool -genkeypair -v \\
+            -keystore "$RUNNER_TEMP/markaz-ajhizati-release.jks" \\
+            -storetype JKS \\
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \\
+            -keypass "$ANDROID_KEYSTORE_PASSWORD" \\
+            -alias "markaz-release" \\
+            -keyalg RSA -keysize 3072 -validity 10000 \\
+            -dname "CN=Markaz Ajhizati, OU=Android, O=Basemn, C=YE"
+          keytool -list -keystore "$RUNNER_TEMP/markaz-ajhizati-release.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD"
+
+      - name: Upload signing keystore for manual secure setup
+        if: ${{ env.HAS_STABLE_SIGNING != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: markaz-ajhizati-signing-keystore
+          path: ${{ runner.temp }}/markaz-ajhizati-release.jks
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Build signed APK
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/markaz-ajhizati-release.jks
