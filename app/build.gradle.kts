@@ -11,9 +11,9 @@ android {
         // New package id isolates this install from earlier test builds/signatures.
         applicationId = "com.basemn.markazajhizati.mobile.compat"
         minSdk = 23
-        targetSdk = 32
-        versionCode = 9
-        versionName = "0.8.1"
+        targetSdk = 35
+        versionCode = 10
+        versionName = "0.8.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -21,10 +21,6 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
-    // This APK is a direct-install compatibility test, not a Play Store release.
-    // Keep targetSdk 32 for this device test and suppress only the Play Store policy lint.
-    lint { disable += "ExpiredTargetSdkVersion" }
-
     // Legacy native-library packaging for broader OEM installer compatibility.
     packaging { jniLibs.useLegacyPackaging = true }
 
