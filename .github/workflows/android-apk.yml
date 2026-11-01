@@ -54,14 +54,7 @@ jobs:
             echo "::error::Add the repository secret ANDROID_KEYSTORE_PASSWORD before running this workflow."
             exit 1
           fi
-          keytool -genkeypair -v \\
-            -keystore "$RUNNER_TEMP/markaz-ajhizati-release.jks" \\
-            -storetype JKS \\
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \\
-            -keypass "$ANDROID_KEYSTORE_PASSWORD" \\
-            -alias "markaz-release" \\
-            -keyalg RSA -keysize 3072 -validity 10000 \\
-            -dname "CN=Markaz Ajhizati, OU=Android, O=Basemn, C=YE"
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/markaz-ajhizati-release.jks" -storetype JKS -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEYSTORE_PASSWORD" -alias "markaz-release" -keyalg RSA -keysize 3072 -validity 10000 -dname "CN=Markaz Ajhizati, OU=Android, O=Basemn, C=YE"
           keytool -list -keystore "$RUNNER_TEMP/markaz-ajhizati-release.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD"
           base64 -w 0 "$RUNNER_TEMP/markaz-ajhizati-release.jks" > "$RUNNER_TEMP/markaz-ajhizati-release.jks.base64"
 
