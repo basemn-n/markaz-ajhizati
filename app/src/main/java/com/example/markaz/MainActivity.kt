@@ -2,6 +2,15 @@ package com.example.markaz
 
 import android.os.Build
 import android.os.Bundle
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Environment
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -189,10 +198,113 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
 }
 
 class MainActivity : ComponentActivity() {
+    private var updateDownloadId: Long = -1L
+    private var updateReceiver: BroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { MarkazApp(this) }
     }
+
+    fun checkForAppUpdate() {
+        Toast.makeText(this, "جارٍ فحص التحديثات...", Toast.LENGTH_SHORT).show()
+        network.execute {
+            try {
+                val connection = URL("https://api.github.com/repos/basemn-n/markaz-ajhizati/releases/latest").openConnection() as HttpURLConnection
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.setRequestProperty("Accept", "application/vnd.github+json")
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                connection.disconnect()
+                val release = JSONObject(response)
+                val latest = release.optString("tag_name").removePrefix("android-v")
+                val current = BuildConfig.VERSION_NAME
+                val assetArray = release.optJSONArray("assets") ?: JSONArray()
+                var apkUrl = ""
+                for (i in 0 until assetArray.length()) {
+                    val asset = assetArray.optJSONObject(i) ?: continue
+                    if (asset.optString("name") == "markaz-ajhizati.apk") {
+                        apkUrl = asset.optString("browser_download_url")
+                        break
+                    }
+                }
+                runOnUiThread {
+                    if (latest.isBlank() || compareVersions(latest, current) <= 0) {
+                        Toast.makeText(this, "التطبيق محدّث بالفعل — الإصدار $current", Toast.LENGTH_LONG).show()
+                    } else if (apkUrl.isBlank()) {
+                        Toast.makeText(this, "يوجد إصدار $latest لكن ملف التثبيت غير متاح بعد.", Toast.LENGTH_LONG).show()
+                    } else {
+                        androidx.appcompat.app.AlertDialog.Builder(this)
+                            .setTitle("تحديث جديد متاح")
+                            .setMessage("الإصدار الحالي $current والجديد $latest. سيتم تنزيل التحديث ثم يطلب أندرويد موافقتك على التثبيت.")
+                            .setNegativeButton("لاحقًا", null)
+                            .setPositiveButton("تنزيل وتثبيت") { _, _ -> downloadUpdate(apkUrl) }
+                            .show()
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "تعذّر فحص التحديث: ${e.message ?: "تحقق من الإنترنت"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun downloadUpdate(url: String) {
+        try {
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle("تحديث مركز أجهزتي")
+                .setDescription("تنزيل الإصدار الجديد")
+                .setMimeType("application/vnd.android.package-archive")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "markaz-update.apk")
+            updateDownloadId = manager.enqueue(request)
+            updateReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+            updateReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) != updateDownloadId) return
+                    try {
+                        val uri = manager.getUriForDownloadedFile(updateDownloadId)
+                            ?: throw IllegalStateException("لم يكتمل تنزيل ملف التحديث")
+                        val install = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "application/vnd.android.package-archive")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(install)
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "تعذّر فتح مثبت التحديث: ${e.message}", Toast.LENGTH_LONG).show()
+                    } finally {
+                        updateReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+                        updateReceiver = null
+                    }
+                }
+            }
+            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else @Suppress("DEPRECATION") registerReceiver(updateReceiver, filter)
+            Toast.makeText(this, "بدأ تنزيل التحديث. سيظهر إشعار عند اكتماله.", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "تعذّر بدء التنزيل: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onDestroy() {
+        updateReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+        updateReceiver = null
+        super.onDestroy()
+    }
+}
+
+private fun compareVersions(first: String, second: String): Int {
+    val a = first.split(".").map { it.toIntOrNull() ?: 0 }
+    val b = second.split(".").map { it.toIntOrNull() ?: 0 }
+    for (i in 0 until maxOf(a.size, b.size)) {
+        val left = a.getOrElse(i) { 0 }
+        val right = b.getOrElse(i) { 0 }
+        if (left != right) return left.compareTo(right)
+    }
+    return 0
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -675,6 +787,10 @@ private fun MarkazApp(activity: MainActivity) {
                         Text("مركز أجهزتي", fontWeight = FontWeight.Bold)
                         Text("تطبيق أندرويد المتصل", fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }, actions = {
+                    TextButton(onClick = { activity.checkForAppUpdate() }) {
+                        Text("فحص التحديث")
                     }
                 })
             }
