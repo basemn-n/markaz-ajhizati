@@ -173,7 +173,7 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
                         .put("model", Build.MODEL.orEmpty())
                         .put("android_version", Build.VERSION.RELEASE.orEmpty())
                         .put("sdk_int", Build.VERSION.SDK_INT)
-                        .put("app_version", packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown")
+                        .put("app_version", "0.8.5")
                         .put("synced_at", System.currentTimeMillis())
                     "completed"
                 }
