@@ -267,7 +267,7 @@ class MainActivity : ComponentActivity() {
                 .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "markaz-update.apk")
             updateDownloadId = manager.enqueue(request)
             updateReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
-            updateReceiver = object : BroadcastReceiver() {
+            val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
                     if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) != updateDownloadId) return
                     try {
@@ -286,9 +286,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            updateReceiver = receiver
             val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            else @Suppress("DEPRECATION") registerReceiver(updateReceiver, filter)
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else registerReceiver(receiver, filter)
             Toast.makeText(this, "بدأ تنزيل التحديث. سيظهر إشعار عند اكتماله.", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "تعذّر بدء التنزيل: ${e.message}", Toast.LENGTH_LONG).show()
