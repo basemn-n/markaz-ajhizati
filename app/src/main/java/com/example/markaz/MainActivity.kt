@@ -134,7 +134,8 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
         if (commandId <= 0L) continue
 
         val command = item.optString("command")
-        val resultPayload = JSONObject()
+        // Tag every Android command response so the dashboard can identify its source consistently.
+        val resultPayload = JSONObject().put("app", "markaz-ajhizati-android")
         val resultStatus = try {
             when (command) {
                 "/status" -> {
