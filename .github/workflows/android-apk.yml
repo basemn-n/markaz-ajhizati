@@ -60,9 +60,9 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "${ANDROID_HOME}/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/apk-badging.txt
-          grep -q "package: name='com.basemn.markazajhizati.mobile.compat' versionCode='9' versionName='0.8.1'" /tmp/apk-badging.txt
+          grep -q "package: name='com.basemn.markazajhizati.mobile.compat' versionCode='10' versionName='0.8.2'" /tmp/apk-badging.txt
           grep -q "sdkVersion:'23'" /tmp/apk-badging.txt
-          grep -q "targetSdkVersion:'32'" /tmp/apk-badging.txt
+          grep -q "targetSdkVersion:'35'" /tmp/apk-badging.txt
 
       - name: Enable KVM for Android emulator
         run: |
