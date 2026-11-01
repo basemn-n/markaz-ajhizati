@@ -222,24 +222,26 @@ class MainActivity : ComponentActivity() {
                 val current = packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0"
                 val assetArray = release.optJSONArray("assets") ?: JSONArray()
                 var apkUrl = ""
+                var apkDigest = ""
                 for (i in 0 until assetArray.length()) {
                     val asset = assetArray.optJSONObject(i) ?: continue
                     if (asset.optString("name") == "app-release.apk") {
                         apkUrl = asset.optString("browser_download_url")
+                        apkDigest = asset.optString("digest")
                         break
                     }
                 }
                 runOnUiThread {
                     if (latest.isBlank() || compareVersions(latest, current) <= 0) {
                         if (showStatus) Toast.makeText(this, "التطبيق محدّث بالفعل — الإصدار $current", Toast.LENGTH_LONG).show()
-                    } else if (apkUrl.isBlank()) {
-                        Toast.makeText(this, "يوجد إصدار $latest لكن ملف التثبيت غير متاح بعد.", Toast.LENGTH_LONG).show()
+                    } else if (apkUrl.isBlank() || !apkDigest.matches(Regex("^sha256:[0-9a-fA-F]{64}$"))) {
+                        Toast.makeText(this, "ملف التحديث أو بصمته الرقمية غير متاحين؛ أوقفنا التثبيت للحماية.", Toast.LENGTH_LONG).show()
                     } else {
                         android.app.AlertDialog.Builder(this)
                             .setTitle("تحديث جديد متاح")
                             .setMessage("الإصدار الحالي $current والجديد $latest. سيتم تنزيل التحديث ثم يطلب أندرويد موافقتك على التثبيت.")
                             .setNegativeButton("لاحقًا", null)
-                            .setPositiveButton("تنزيل وتثبيت") { _, _ -> downloadUpdate(apkUrl) }
+                            .setPositiveButton("تنزيل وتثبيت") { _, _ -> downloadUpdate(apkUrl, apkDigest.removePrefix("sha256:").lowercase()) }
                             .show()
                     }
                 }
@@ -251,7 +253,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun downloadUpdate(url: String) {
+    private fun downloadUpdate(url: String, expectedSha256: String) {
         if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
             Toast.makeText(this, "اسمح للتطبيق بتثبيت التحديثات من هذا المصدر ثم اضغط فحص التحديث مرة أخرى.", Toast.LENGTH_LONG).show()
             startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -274,6 +276,20 @@ class MainActivity : ComponentActivity() {
                     try {
                         val uri = manager.getUriForDownloadedFile(updateDownloadId)
                             ?: throw IllegalStateException("لم يكتمل تنزيل ملف التحديث")
+                        val actualSha256 = contentResolver.openInputStream(uri)?.use { input ->
+                            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                            val buffer = ByteArray(8192)
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                digest.update(buffer, 0, count)
+                            }
+                            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+                        } ?: throw IllegalStateException("تعذرت قراءة ملف التحديث للتحقق منه")
+                        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                            manager.remove(updateDownloadId)
+                            throw SecurityException("فشل التحقق من سلامة ملف التحديث؛ لن يتم تثبيته")
+                        }
                         val install = Intent(Intent.ACTION_VIEW).apply {
                             setDataAndType(uri, "application/vnd.android.package-archive")
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
