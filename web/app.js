@@ -543,7 +543,8 @@ function renderCommandResult(result) {
   const fields = [
     ["message", "الرسالة"], ["error", "الخطأ"], ["device_name", "اسم الجهاز"],
     ["manufacturer", "الشركة"], ["model", "الموديل"],
-    ["android_version", "إصدار أندرويد"], ["sdk_int", "مستوى النظام"]
+    ["android_version", "إصدار أندرويد"], ["sdk_int", "مستوى النظام"],
+    ["app_version", "إصدار تطبيق مركز أجهزتي"]
   ];
   fields.forEach(([key, label]) => {
     if (result[key] === undefined || result[key] === null || result[key] === "") return;
@@ -554,6 +555,12 @@ function renderCommandResult(result) {
   if (result.online === true) {
     const line = document.createElement("div");
     line.textContent = "الاتصال: متصل وقت تنفيذ الفحص";
+    wrap.append(line);
+  }
+  const syncedAt = result.synced_at || result.checked_at;
+  if (syncedAt) {
+    const line = document.createElement("div");
+    line.textContent = "آخر مزامنة: " + new Date(Number(syncedAt)).toLocaleString("ar");
     wrap.append(line);
   }
   const details = document.createElement("details");
