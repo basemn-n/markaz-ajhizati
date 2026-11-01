@@ -327,7 +327,7 @@ class CommandResultCreate(BaseModel):
     result: dict = Field(default_factory=dict)
 
 
-ALLOWED_DEVICE_COMMANDS = {"/status", "/device", "/help"}
+ALLOWED_DEVICE_COMMANDS = {"/status", "/device", "/sync", "/help"}
 COMMAND_TTL_MINUTES = 5
 
 
