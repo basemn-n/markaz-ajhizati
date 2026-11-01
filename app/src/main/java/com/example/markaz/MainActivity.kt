@@ -237,6 +237,40 @@ private fun MarkazApp(activity: MainActivity) {
         }
     }
 
+    // Refresh incoming screen-share requests while the Android app is open.
+    // This only receives session metadata; it never captures the screen by itself.
+    LaunchedEffect(token) {
+        val authToken = token ?: return@LaunchedEffect
+        while (true) {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    val result = requestApi("GET", "/api/screen-sessions", authToken)
+                    if (result.status !in 200..299) {
+                        throw IllegalStateException(errorMessage(result))
+                    }
+                    val array = JSONArray(result.body)
+                    buildList {
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            add(ScreenSessionItem(
+                                id = item.optLong("id"),
+                                controllerId = item.optLong("controller_id"),
+                                targetId = item.optLong("target_id"),
+                                controllerUsername = item.optString("controller_username", "حساب"),
+                                targetUsername = item.optString("target_username", "حساب"),
+                                status = item.optString("status", "requested")
+                            ))
+                        }
+                    }
+                }
+                screenSessions = parsed
+            } catch (e: Exception) {
+                notice = e.message ?: "تعذر تحديث طلبات مشاركة الشاشة."
+            }
+            delay(5000)
+        }
+    }
+
     fun loadDevices(authToken: String, createIfMissing: Boolean) {
         busy = true
         network.execute {
