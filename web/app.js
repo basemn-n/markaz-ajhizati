@@ -798,7 +798,7 @@ async function refreshSharedFiles() {
     }
     items.forEach(item => {
       const card = document.createElement("article");
-      card.className = "device-card";
+      card.className = "card";
       const title = document.createElement("h3");
       title.textContent = item.filename;
       const detail = document.createElement("p");
