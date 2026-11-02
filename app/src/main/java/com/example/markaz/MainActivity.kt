@@ -185,7 +185,7 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
                         .put("android_version", Build.VERSION.RELEASE.orEmpty())
                         .put("sdk_int", Build.VERSION.SDK_INT)
                         .put("app_version", BuildConfig.VERSION_NAME)
-                        .put("app_id", packageName)
+                        .put("app_id", BuildConfig.APPLICATION_ID)
                         .put("uptime_ms", android.os.SystemClock.elapsedRealtime())
                         .put("checked_at", System.currentTimeMillis())
                         .put("network_check", "api_reachable")
