@@ -10,6 +10,7 @@ import android.media.projection.MediaProjection
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.util.Log
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
@@ -46,9 +47,9 @@ class ScreenCaptureService : Service() {
         if (token.isBlank() || sessionId <= 0 || resultCode == Int.MIN_VALUE || projectionData == null) { stopSelf(); return START_NOT_STICKY }
         createChannel()
         val stop = PendingIntent.getService(this, 4102, Intent(this, ScreenCaptureService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("مشاركة الشاشة مفعّلة").setContentText("يتم بث الشاشة بعد موافقتك. اضغط إيقاف لإنهاء المشاركة.").setOngoing(true).addAction(android.R.drawable.ic_media_pause, "إيقاف", stop).build()
+        val notification = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("مشاركة الشاشة مفعّلة").setContentText("جارٍ تجهيز التقاط الشاشة واتصال الفيديو...").setOngoing(true).addAction(android.R.drawable.ic_media_pause, "إيقاف", stop).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(NOTIFICATION_ID, notification)
-        if (running.compareAndSet(false, true)) main.post { initializeRtc() }
+        if (running.compareAndSet(false, true)) { sendSignal("status", JSONObject().put("state", "starting")); main.post { initializeRtc() } }
         return START_NOT_STICKY
     }
     private fun initializeRtc() {
@@ -60,7 +61,14 @@ class ScreenCaptureService : Service() {
             val config = PeerConnection.RTCConfiguration(listOf(ice)); config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             peer = factory!!.createPeerConnection(config, object : PeerConnection.Observer {
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) { if (state == PeerConnection.IceConnectionState.FAILED || state == PeerConnection.IceConnectionState.CLOSED) main.post { stopStreaming() } }
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                    when (state) {
+                        PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> sendSignal("status", JSONObject().put("state", "connected"))
+                        PeerConnection.IceConnectionState.DISCONNECTED -> sendSignal("status", JSONObject().put("state", "disconnected"))
+                        PeerConnection.IceConnectionState.FAILED -> { sendSignal("status", JSONObject().put("state", "failed").put("message", "ICE connection failed; STUN-only path could not connect.")); main.post { stopStreaming() } }
+                        else -> {}
+                    }
+                }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
                 override fun onIceCandidate(candidate: IceCandidate?) { if (candidate != null && running.get()) sendSignal("ice", JSONObject().put("candidate", candidate.sdp).put("sdpMid", candidate.sdpMid).put("sdpMLineIndex", candidate.sdpMLineIndex)) }
@@ -77,8 +85,13 @@ class ScreenCaptureService : Service() {
             capturer = ScreenCapturerAndroid(projectionData!!, object : MediaProjection.Callback() { override fun onStop() { main.post { stopStreaming() } } })
             capturer!!.initialize(textureHelper, this, source.capturerObserver); capturer!!.startCapture(1280, 720, 15)
             val track = factory!!.createVideoTrack("markaz-screen", source); peer!!.addTrack(track, listOf("markaz-screen-stream"))
+            sendSignal("status", JSONObject().put("state", "capturing"))
             startSignalPolling()
-        } catch (_: Exception) { stopStreaming() }
+        } catch (e: Exception) {
+            Log.e("MarkazScreen", "Screen capture initialization failed", e)
+            sendSignal("status", JSONObject().put("state", "failed").put("message", (e.message ?: e.javaClass.simpleName).take(250)))
+            stopStreaming(false)
+        }
     }
     private fun startSignalPolling() {
         pollThread = Thread({ while (running.get()) {
@@ -98,13 +111,17 @@ class ScreenCaptureService : Service() {
         when (kind) {
             "stop" -> stopStreaming()
             "offer" -> {
+                sendSignal("status", JSONObject().put("state", "offer_received"))
                 val offer = SessionDescription(SessionDescription.Type.OFFER, payload.optString("sdp"))
                 pc.setRemoteDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         synchronized(pendingRemoteIce) { pendingRemoteIce.forEach { pc.addIceCandidate(it) }; pendingRemoteIce.clear() }
                         pc.createAnswer(object : SdpObserver {
                         override fun onCreateSuccess(answer: SessionDescription?) { if (answer == null) return; pc.setLocalDescription(object : SdpObserver {
-                            override fun onSetSuccess() { sendSignal("answer", JSONObject().put("type", "answer").put("sdp", answer.description)) }
+                            override fun onSetSuccess() {
+                                sendSignal("answer", JSONObject().put("type", "answer").put("sdp", answer.description))
+                                sendSignal("status", JSONObject().put("state", "answer_sent"))
+                            }
                             override fun onSetFailure(error: String?) {}
                             override fun onCreateSuccess(desc: SessionDescription?) {}
                             override fun onCreateFailure(error: String?) {}
@@ -133,9 +150,9 @@ class ScreenCaptureService : Service() {
         } finally { c.disconnect() }
     }
     private fun createChannel() { if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "مشاركة الشاشة", NotificationManager.IMPORTANCE_LOW)) }
-    private fun stopStreaming() {
+    private fun stopStreaming(notifyPeer: Boolean = true) {
         if (!running.getAndSet(false)) { stopSelf(); return }
-        Thread { try { request("POST", "/api/screen-sessions/$sessionId/stop") } catch (_: Exception) {} }.start()
+        if (notifyPeer) Thread { try { request("POST", "/api/screen-sessions/$sessionId/stop") } catch (_: Exception) {} }.start()
         try { capturer?.stopCapture() } catch (_: Exception) {}
         try { capturer?.dispose() } catch (_: Exception) {}
         try { videoSource?.dispose() } catch (_: Exception) {}
