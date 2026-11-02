@@ -34,30 +34,43 @@ android {
     val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
     val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
-    if (releaseStoreFile.isNullOrBlank() ||
-        releaseStorePassword.isNullOrBlank() ||
-        releaseKeyAlias.isNullOrBlank() ||
-        releaseKeyPassword.isNullOrBlank()
-    ) {
-        throw GradleException(
-            "Release signing is not configured. Set ANDROID_KEYSTORE_PATH, " +
-                "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD."
-        )
-    }
+    val hasStableSigning = !releaseStoreFile.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank()
 
     signingConfigs {
-        create("stableRelease") {
-            storeFile = file(releaseStoreFile)
-            storePassword = releaseStorePassword
-            keyAlias = releaseKeyAlias
-            keyPassword = releaseKeyPassword
+        if (hasStableSigning) {
+            create("stableRelease") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("stableRelease")
+            if (hasStableSigning) {
+                signingConfig = signingConfigs.getByName("stableRelease")
+            }
             isMinifyEnabled = false
+        }
+    }
+
+    // Keep debug/test builds usable, but never permit an unsigned or debug-signed
+    // release APK to be mistaken for an installable update.
+    tasks.configureEach {
+        if (name == "assembleRelease" || name == "bundleRelease") {
+            doFirst {
+                if (!hasStableSigning) {
+                    throw GradleException(
+                        "Release signing is not configured. Set ANDROID_KEYSTORE_PATH, " +
+                            "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD."
+                    )
+                }
+            }
         }
     }
 }
