@@ -1327,4 +1327,3 @@ private fun MarkazApp(activity: MainActivity) {
             }
         }
     }
-}
