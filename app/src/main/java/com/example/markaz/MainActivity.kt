@@ -1186,7 +1186,7 @@ private fun MarkazApp(activity: MainActivity) {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("طلب مشاركة شاشة", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                                 Text("الحساب ${item.controllerUsername} يريد مشاهدة شاشة هذا الجهاز.")
-                                Text("الموافقة لا تبدأ البث؛ التقاط الشاشة ما زال غير مفعّل.",
+                                Text("بعد الموافقة ستظهر نافذة أندرويد لبدء التقاط الشاشة؛ يمكنك الرفض أو إيقاف المشاركة في أي وقت.",
                                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { decideScreenSession(item, true) }, enabled = !busy,
