@@ -1052,14 +1052,31 @@ def create_screen_session(payload: ScreenSessionCreate, user: CurrentUser):
         raise HTTPException(status_code=422, detail="Cannot share a screen with the same account")
     with connect() as db:
         link = _approved_screen_link(db, int(user["id"]), int(payload.target_user_id))
-        cur = db.execute(
-            """INSERT INTO screen_sessions(link_id, controller_id, target_id, status, created_at, updated_at)
-               VALUES(?,?,?,'requested',?,?) RETURNING id""",
-            (link["id"], user["id"], payload.target_user_id, now(), now()),
-        )
-        session_id = cur.fetchone()["id"]
-    return {"id": session_id, "status": "requested",
-            "message": "Request sent. The target must explicitly accept screen sharing on the Android device."}
+        existing = db.execute(
+            """SELECT id, status FROM screen_sessions
+               WHERE controller_id=? AND target_id=?
+                 AND status IN ('requested','accepted','active')
+               ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END,
+                        id DESC
+               LIMIT 1""",
+            (user["id"], payload.target_user_id),
+        ).fetchone()
+        if existing:
+            session_id = int(existing["id"])
+            session_status = existing["status"]
+            reused = True
+        else:
+            cur = db.execute(
+                """INSERT INTO screen_sessions(link_id, controller_id, target_id, status, created_at, updated_at)
+                   VALUES(?,?,?,'requested',?,?) RETURNING id""",
+                (link["id"], user["id"], payload.target_user_id, now(), now()),
+            )
+            session_id = cur.fetchone()["id"]
+            session_status = "requested"
+            reused = False
+    return {"id": session_id, "status": session_status, "reused": reused,
+            "message": "An existing screen-sharing session was reused." if reused else
+            "Request sent. The target must explicitly accept screen sharing on the Android device."}
 
 
 @app.get("/api/screen-sessions")
