@@ -431,6 +431,22 @@ private fun MarkazApp(activity: MainActivity) {
     var fileBusy by remember { mutableStateOf(false) }
     var selectedFileRecipient by remember { mutableStateOf<PairItem?>(null) }
     var pendingDownload by remember { mutableStateOf<SharedFileItem?>(null) }
+    fun refreshSharedFiles(authToken: String) {
+        network.execute { try {
+            val result = requestApi("GET", "/api/files", authToken)
+            if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+            val array = JSONArray(result.body)
+            val parsed = buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    add(SharedFileItem(item.optLong("id"), item.optString("filename"), item.optString("content_type"),
+                        item.optLong("size_bytes"), item.optString("direction"),
+                        if (item.optString("direction") == "sent") item.optString("recipient_username") else item.optString("sender_username")))
+                }
+            }
+            activity.runOnUiThread { sharedFiles = parsed }
+        } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر تحديث الملفات." } } }
+    }
     val pickSharedFile = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         val authToken = token; val recipient = selectedFileRecipient
         if (uri != null && authToken != null && recipient != null) {
@@ -640,22 +656,6 @@ private fun MarkazApp(activity: MainActivity) {
     }
 
 
-    fun refreshSharedFiles(authToken: String) {
-        network.execute { try {
-            val result = requestApi("GET", "/api/files", authToken)
-            if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
-            val array = JSONArray(result.body)
-            val parsed = buildList {
-                for (i in 0 until array.length()) {
-                    val item = array.getJSONObject(i)
-                    add(SharedFileItem(item.optLong("id"), item.optString("filename"), item.optString("content_type"),
-                        item.optLong("size_bytes"), item.optString("direction"),
-                        if (item.optString("direction") == "sent") item.optString("recipient_username") else item.optString("sender_username")))
-                }
-            }
-            activity.runOnUiThread { sharedFiles = parsed }
-        } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر تحديث الملفات." } } }
-    }
     fun startFilePicker(recipient: PairItem) { selectedFileRecipient = recipient; pickSharedFile.launch(arrayOf("*/*")) }
     fun startFileDownload(item: SharedFileItem) { pendingDownload = item; saveSharedFile.launch(item.filename) }
 
