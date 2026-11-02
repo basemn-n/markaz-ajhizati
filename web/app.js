@@ -334,6 +334,14 @@ async function refreshScreenSessions() {
       list.replaceChildren();
       return emptyMessage(list, "لا توجد طلبات مشاركة شاشة حاليًا.");
     }
+    const ownSession = items.find(item => Number(item.controller_id) === Number(currentUser?.id));
+    if (ownSession) {
+      if (["accepted", "active"].includes(ownSession.status)) {
+        showScreenNotice("تمت الموافقة على مشاركة الشاشة. اضغط «مشاهدة الشاشة» لبدء اتصال الفيديو.");
+      } else if (ownSession.status === "requested") {
+        showScreenNotice("طلب مشاركة الشاشة مرسل؛ بانتظار موافقة صاحب الهاتف.");
+      }
+    }
     const fragment = document.createDocumentFragment();
     items.forEach(item => {
       const card = document.createElement("article");
