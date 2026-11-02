@@ -377,8 +377,15 @@ private fun MarkazApp(activity: MainActivity) {
     LaunchedEffect(token, deviceName) {
         val authToken = token ?: return@LaunchedEffect
         while (true) {
-            withContext(Dispatchers.IO) {
-                pollAndExecuteCommands(authToken, deviceName)
+            try {
+                withContext(Dispatchers.IO) {
+                    pollAndExecuteCommands(authToken, deviceName)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep polling after transient network errors or malformed responses.
+                // The server's 60-second claim lease recovers commands without a result.
             }
             delay(5000)
         }
