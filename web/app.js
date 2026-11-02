@@ -426,6 +426,20 @@ async function pollViewerSignals() {
     for (const item of (data.signals || [])) {
       viewerAfter = Math.max(viewerAfter, Number(item.id) || 0);
       if (item.kind === 'stop') { closeViewer('أوقف الطرف الآخر مشاركة الشاشة.'); return; }
+      if (item.kind === 'status' && item.payload) {
+        const state = item.payload.state || '';
+        const messages = {
+          starting: 'خدمة الهاتف بدأت؛ جارٍ تجهيز التقاط الشاشة.',
+          capturing: 'الهاتف يلتقط الشاشة؛ جارٍ انتظار عرض الاتصال من الكمبيوتر.',
+          offer_received: 'وصل عرض الاتصال إلى الهاتف؛ جارٍ إنشاء الرد.',
+          answer_sent: 'أرسل الهاتف رد الاتصال؛ جارٍ إكمال اتصال الفيديو.',
+          connected: 'اتصل الهاتف بالكمبيوتر.',
+          disconnected: 'انقطع اتصال الفيديو مؤقتًا.',
+          failed: 'تعذر تشغيل بث الهاتف: ' + (item.payload.message || 'خطأ غير محدد')
+        };
+        const n = document.querySelector('#screenViewerMessage'); if (n && messages[state]) n.textContent = messages[state];
+        const s = document.querySelector('#screenViewerStatus'); if (s && state) s.textContent = state === 'connected' ? 'متصل' : state === 'failed' ? 'فشل البث' : 'جارٍ الاتصال';
+      }
       if (item.kind === 'answer' && item.payload && item.payload.type === 'answer' && !viewerPc.remoteDescription) await viewerPc.setRemoteDescription(item.payload);
       if (item.kind === 'ice' && item.payload && item.payload.candidate) { try { await viewerPc.addIceCandidate(new RTCIceCandidate(item.payload)); } catch (e) { console.warn('ICE candidate rejected', e); } }
     }
@@ -446,7 +460,13 @@ async function startScreenViewer(item) {
       const n = document.querySelector('#screenViewerMessage'); if (n) n.textContent = 'يصل بث شاشة الهاتف عبر WebRTC.';
     };
     viewerPc.onicecandidate = event => { if (event.candidate && viewerSession === Number(item.id)) viewerSignal(item.id, 'ice', event.candidate.toJSON()).catch(console.error); };
-    viewerPc.onconnectionstatechange = () => { const s = document.querySelector('#screenViewerStatus'); if (s && viewerPc) s.textContent = viewerPc.connectionState; };
+    viewerPc.onconnectionstatechange = () => {
+      const state = viewerPc?.connectionState;
+      const s = document.querySelector('#screenViewerStatus');
+      if (s && state) s.textContent = state === 'connected' ? 'متصل' : state === 'failed' ? 'فشل الاتصال' : state;
+      const n = document.querySelector('#screenViewerMessage');
+      if (n && state === 'failed') n.textContent = 'فشل اتصال WebRTC. تحقق من رد الهاتف واتصال الشبكة؛ قد نحتاج خادم TURN.';
+    };
     const offer = await viewerPc.createOffer(); await viewerPc.setLocalDescription(offer);
     await viewerSignal(item.id, 'offer', {type:offer.type, sdp:offer.sdp});
     viewerAfter = 0; viewerTimer = setInterval(pollViewerSignals, 1000); await pollViewerSignals();
