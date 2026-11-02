@@ -776,6 +776,16 @@ private fun MarkazApp(activity: MainActivity) {
                     token = authToken
                     signedInUsername = accountName
                     password = ""
+                    val serviceIntent = Intent(activity, DeviceManagementService::class.java).apply {
+                        action = DeviceManagementService.ACTION_START
+                        putExtra(DeviceManagementService.EXTRA_TOKEN, authToken)
+                        putExtra(DeviceManagementService.EXTRA_DEVICE_NAME, deviceName)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        activity.startForegroundService(serviceIntent)
+                    } else {
+                        activity.startService(serviceIntent)
+                    }
                     notice = "تم تسجيل الدخول. جارٍ تسجيل الهاتف..."
                     loadDevices(authToken, true)
                     refreshPairings(authToken)
@@ -907,6 +917,9 @@ private fun MarkazApp(activity: MainActivity) {
                                     Text("تحديث")
                                 }
                                 OutlinedButton(onClick = {
+                                    activity.startService(Intent(activity, DeviceManagementService::class.java).apply {
+                                        action = DeviceManagementService.ACTION_STOP
+                                    })
                                     token = null
                                     signedInUsername = ""
                                     devices = emptyList()
