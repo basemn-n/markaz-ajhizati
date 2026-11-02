@@ -972,8 +972,29 @@ def revoke_pairing(pairing_id: int, user: CurrentUser):
             raise HTTPException(status_code=404, detail="Pairing link not found")
         if row["status"] != "approved":
             raise HTTPException(status_code=409, detail="Only an approved link can be revoked")
+        # Revoking a pairing must terminate every live screen session on that link.
+        # Queue a stop signal for both participants before access to signaling is denied.
+        live_sessions = db.execute(
+            """SELECT id, controller_id, target_id FROM screen_sessions
+               WHERE link_id=? AND status IN ('requested','accepted','active')""",
+            (pairing_id,),
+        ).fetchall()
+        stopped_at = now()
+        for session in live_sessions:
+            db.execute(
+                "UPDATE screen_sessions SET status='stopped', updated_at=? WHERE id=?",
+                (stopped_at, session["id"]),
+            )
+            db.execute(
+                """INSERT INTO screen_signals(session_id, sender_id, recipient_id, kind, payload, created_at)
+                   VALUES(?,?,?,'stop','{}',?), (?,?,?,'stop','{}',?)""",
+                (
+                    session["id"], user["id"], session["target_id"], stopped_at,
+                    session["id"], user["id"], session["controller_id"], stopped_at,
+                ),
+            )
         db.execute("UPDATE device_links SET status='revoked' WHERE id=?", (pairing_id,))
-    return {"id": pairing_id, "status": "revoked"}
+    return {"id": pairing_id, "status": "revoked", "stopped_screen_sessions": len(live_sessions)}
 
 
 # Screen-sharing signaling foundation. This API relays WebRTC negotiation only;
