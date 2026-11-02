@@ -91,6 +91,14 @@
       </div>
       <div class="section-heading"><div><h2>الطلبات الحالية</h2></div></div>
       <div id="screenSessionList" class="device-list"></div>
+      <div class="card screen-viewer-card" style="margin-top:14px">
+        <div class="section-heading" style="margin-top:0">
+          <div><h2>عارض الشاشة</h2><p class="muted">مساحة العرض جاهزة للربط بعميل أندرويد بعد تنفيذ البث.</p></div>
+          <span id="screenViewerStatus" class="screen-viewer-status" role="status">غير متصل</span>
+        </div>
+        <video id="screenVideo" class="screen-video" playsinline controls muted aria-label="عرض شاشة الجهاز"></video>
+        <p id="screenViewerMessage" class="muted screen-viewer-message">لا يوجد بث فيديو حاليًا. قبول الطلب وحده لا يبدأ التقاط الشاشة أو إرسالها؛ يجب أن يوافق صاحب الهاتف على نافذة مشاركة الشاشة في Android وأن يعمل عميل WebRTC.</p>
+      </div>
     </section>
 
     <section id="commands" class="panel hidden">
