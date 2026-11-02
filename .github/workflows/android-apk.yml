@@ -22,6 +22,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Validate server and browser source syntax
+        run: |
+          python -m py_compile server/main.py
+          node --check web/app.js
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
