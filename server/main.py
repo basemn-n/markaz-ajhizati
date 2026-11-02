@@ -89,19 +89,6 @@ def now() -> str:
 def init_db() -> None:
     if IS_POSTGRES:
         schema = """
-        CREATE TABLE IF NOT EXISTS shared_files (
-            id BIGSERIAL PRIMARY KEY,
-            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            filename TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            size_bytes BIGINT NOT NULL,
-            file_data BYTEA NOT NULL,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
-        CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS users (
             id BIGSERIAL PRIMARY KEY,
             username TEXT NOT NULL,
@@ -199,19 +186,6 @@ def init_db() -> None:
         """
     else:
         schema = """
-        CREATE TABLE IF NOT EXISTS shared_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            filename TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            file_data BLOB NOT NULL,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
-        CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -308,7 +282,32 @@ def init_db() -> None:
     with connect() as db:
         db.executescript(schema)
         if IS_POSTGRES:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS shared_files (
+                    id BIGSERIAL PRIMARY KEY,
+                    sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL, content_type TEXT NOT NULL,
+                    size_bytes BIGINT NOT NULL, file_data BYTEA NOT NULL,
+                    created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
+            """)
             db.execute("ALTER TABLE device_commands ADD COLUMN IF NOT EXISTS claimed_at TEXT")
+        else:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS shared_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL, content_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL, file_data BLOB NOT NULL,
+                    created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
+            """)
         else:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(device_commands)").fetchall()}
             if "claimed_at" not in columns:
