@@ -328,10 +328,13 @@ async function refreshScreenTargets() {
 }
 async function refreshScreenSessions() {
   const list = document.querySelector("#screenSessionList");
-  list.replaceChildren();
   try {
     const items = await api("/api/screen-sessions");
-    if (!items.length) return emptyMessage(list, "لا توجد طلبات مشاركة شاشة حاليًا.");
+    if (!items.length) {
+      list.replaceChildren();
+      return emptyMessage(list, "لا توجد طلبات مشاركة شاشة حاليًا.");
+    }
+    const fragment = document.createDocumentFragment();
     items.forEach(item => {
       const card = document.createElement("article");
       card.className = "device";
@@ -385,9 +388,14 @@ async function refreshScreenSessions() {
         });
         card.append(stop);
       }
-      list.append(card);
+      fragment.append(card);
     });
-  } catch (error) { emptyMessage(list, error.message); }
+    // Replace only after a successful response and complete render to avoid refresh flicker.
+    list.replaceChildren(fragment);
+  } catch (error) {
+    // Keep the last good list visible during temporary network errors.
+    console.warn("Screen session refresh failed", error);
+  }
 }
 // WebRTC browser viewer. The Android client must publish its consented MediaProjection track.
 let viewerPc = null, viewerTimer = null, viewerAfter = 0, viewerSession = 0, viewerBusy = false;
