@@ -754,6 +754,128 @@ async function refreshChatsAll() {
   }
 }
 document.querySelector("#chatContactSelect").addEventListener("change", refreshMessages);
+
+async function refreshFileRecipients() {
+  const select = document.querySelector("#fileRecipientSelect");
+  const previous = select.value;
+  const links = await api("/api/pairings");
+  const approved = links.filter(item => item.status === "approved" && Number(item.target_user_id) > 0);
+  select.replaceChildren();
+  approved.forEach(item => {
+    const option = document.createElement("option");
+    option.value = String(item.target_user_id);
+    option.textContent = item.target_username || "حساب مرتبط";
+    select.append(option);
+  });
+  if (!approved.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "لا توجد حسابات مرتبطة وموافق عليها";
+    select.append(option);
+    select.disabled = true;
+    document.querySelector("#sendSharedFileBtn").disabled = true;
+  } else {
+    select.disabled = false;
+    document.querySelector("#sendSharedFileBtn").disabled = false;
+    if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  }
+}
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + " بايت";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " كيلوبايت";
+  return (bytes / 1024 / 1024).toFixed(2) + " ميجابايت";
+}
+async function refreshSharedFiles() {
+  const list = document.querySelector("#sharedFileList");
+  try {
+    const items = await api("/api/files");
+    const fragment = document.createDocumentFragment();
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "لا توجد ملفات محفوظة حاليًا.";
+      fragment.append(empty);
+    }
+    items.forEach(item => {
+      const card = document.createElement("article");
+      card.className = "device-card";
+      const title = document.createElement("h3");
+      title.textContent = item.filename;
+      const detail = document.createElement("p");
+      detail.className = "muted";
+      detail.textContent = (item.direction === "sent" ? "إلى " + item.recipient_username : "من " + item.sender_username)
+        + " · " + formatFileSize(item.size_bytes) + " · " + new Date(item.created_at).toLocaleString("ar");
+      const download = document.createElement("button");
+      download.type = "button";
+      download.className = "secondary";
+      download.textContent = "تنزيل الملف";
+      download.addEventListener("click", async () => {
+        download.disabled = true;
+        try {
+          const response = await fetch(API_BASE + "/api/files/" + item.id + "/download", {
+            headers: {Authorization: "Bearer " + token}
+          });
+          if (!response.ok) {
+            let message = "تعذر تنزيل الملف.";
+            try { message = (await response.json()).detail || message; } catch {}
+            throw new Error(message);
+          }
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = item.filename;
+          document.body.append(anchor);
+          anchor.click();
+          anchor.remove();
+          window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+          notify("بدأ تنزيل " + item.filename);
+        } catch (error) { notify(error.message); }
+        finally { download.disabled = false; }
+      });
+      card.append(title, detail, download);
+      fragment.append(card);
+    });
+    list.replaceChildren(fragment);
+  } catch (error) {
+    list.textContent = "تعذر تحميل الملفات: " + error.message;
+  }
+}
+document.querySelector("#fileShareForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const recipient = document.querySelector("#fileRecipientSelect").value;
+  const input = document.querySelector("#sharedFileInput");
+  const file = input.files?.[0];
+  const button = document.querySelector("#sendSharedFileBtn");
+  if (!recipient) return showFileNotice("اختر حسابًا مرتبطًا وموافقًا عليه.");
+  if (!file) return showFileNotice("اختر ملفًا أولًا.");
+  if (file.size <= 0) return showFileNotice("الملف فارغ.");
+  if (file.size > 8 * 1024 * 1024) return showFileNotice("الحد الأقصى لحجم الملف 8 ميجابايت.");
+  button.disabled = true;
+  showFileNotice("جارٍ رفع الملف بأمان...");
+  try {
+    const params = new URLSearchParams({recipient_id:recipient, filename:file.name});
+    const response = await fetch(API_BASE + "/api/files?" + params.toString(), {
+      method:"POST", headers:{Authorization:"Bearer " + token, "Content-Type":file.type || "application/octet-stream"}, body:file
+    });
+    let data = {};
+    try { data = await response.json(); } catch {}
+    if (!response.ok) throw new Error(data.detail || "تعذر إرسال الملف.");
+    input.value = "";
+    showFileNotice("تم إرسال " + data.filename + " بنجاح (" + formatFileSize(data.size_bytes) + ").");
+    await refreshSharedFiles();
+  } catch (error) { showFileNotice(error.message); }
+  finally { button.disabled = false; }
+});
+function showFileNotice(message) {
+  const box = document.querySelector("#fileShareNotice");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+document.querySelector("#refreshFilesBtn").addEventListener("click", async () => {
+  try { await refreshFileRecipients(); await refreshSharedFiles(); }
+  catch (error) { showFileNotice(error.message); }
+});
 document.querySelector("#refreshChatsBtn").addEventListener("click", refreshChatsAll);
 document.querySelector("#messageForm").addEventListener("submit", async event => {
   event.preventDefault();
@@ -796,6 +918,7 @@ document.querySelectorAll(".tab[data-tab]").forEach((button) => button.addEventL
   if (button.dataset.tab === "screen") refreshScreenAll();
   if (button.dataset.tab === "commands") refreshCommandsAll();
   if (button.dataset.tab === "chats") refreshChatsAll();
+  if (button.dataset.tab === "files") { refreshFileRecipients().then(refreshSharedFiles).catch(error => showFileNotice(error.message)); }
 }));
 let installPrompt = null;
 const installBtn = document.querySelector("#installBtn");
