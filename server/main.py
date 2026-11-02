@@ -1028,7 +1028,7 @@ class ScreenSessionCreate(BaseModel):
 
 
 class ScreenSignalCreate(BaseModel):
-    kind: str = Field(pattern=r"^(offer|answer|ice|stop)$")
+    kind: str = Field(pattern=r"^(offer|answer|ice|stop|status)$")
     payload: dict = Field(default_factory=dict)
 
 
@@ -1150,6 +1150,14 @@ def send_screen_signal(session_id: int, payload: ScreenSignalCreate, user: Curre
         if sdp_mline_index is not None and (not isinstance(sdp_mline_index, int) or sdp_mline_index < 0 or sdp_mline_index > 255):
             raise HTTPException(status_code=422, detail="Invalid ICE sdpMLineIndex")
         data = {"candidate": candidate, "sdpMid": sdp_mid, "sdpMLineIndex": sdp_mline_index}
+    elif payload.kind == "status":
+        state = data.get("state")
+        message = data.get("message", "")
+        if state not in ("starting", "capturing", "offer_received", "answer_sent", "connected", "disconnected", "failed"):
+            raise HTTPException(status_code=422, detail="Invalid screen status")
+        if not isinstance(message, str) or len(message) > 300:
+            raise HTTPException(status_code=422, detail="Invalid screen status message")
+        data = {"state": state, "message": message}
     else:
         data = {}
     serialized = json.dumps(data, separators=(",", ":"), ensure_ascii=True)
