@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -89,6 +89,19 @@ def now() -> str:
 def init_db() -> None:
     if IS_POSTGRES:
         schema = """
+        CREATE TABLE IF NOT EXISTS shared_files (
+            id BIGSERIAL PRIMARY KEY,
+            sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes BIGINT NOT NULL,
+            file_data BYTEA NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS users (
             id BIGSERIAL PRIMARY KEY,
             username TEXT NOT NULL,
@@ -186,6 +199,19 @@ def init_db() -> None:
         """
     else:
         schema = """
+        CREATE TABLE IF NOT EXISTS shared_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            file_data BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -1177,3 +1203,130 @@ def stop_screen_session(session_id: int, user: CurrentUser):
             (session_id, user["id"], peer_id, now()),
         )
     return {"id": session_id, "status": "stopped"}
+
+
+# Private, authenticated file transfer. Files expire after seven days.
+MAX_SHARED_FILE_BYTES = 8 * 1024 * 1024
+SHARED_FILE_TTL_DAYS = 7
+
+
+def _file_metadata(row, current_user_id: int):
+    item = dict(row)
+    return {
+        "id": item["id"],
+        "sender_id": item["sender_id"],
+        "recipient_id": item["recipient_id"],
+        "sender_username": item["sender_username"],
+        "recipient_username": item["recipient_username"],
+        "filename": item["filename"],
+        "content_type": item["content_type"],
+        "size_bytes": item["size_bytes"],
+        "created_at": item["created_at"],
+        "expires_at": item["expires_at"],
+        "direction": "sent" if int(item["sender_id"]) == int(current_user_id) else "received",
+    }
+
+
+@app.post("/api/files", status_code=201)
+async def upload_shared_file(
+    request: Request,
+    user: CurrentUser,
+    recipient_id: int = Query(gt=0),
+    filename: str = Query(min_length=1, max_length=180),
+):
+    """Upload one user-selected file to the other participant of an approved link."""
+    clean_name = filename.replace("\\\\", "_").replace("/", "_").strip()
+    if not clean_name or clean_name in {".", ".."} or any(ord(ch) < 32 for ch in clean_name):
+        raise HTTPException(status_code=422, detail="Invalid file name")
+    content_type = (request.headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip().lower()
+    if len(content_type) > 120 or not content_type:
+        content_type = "application/octet-stream"
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > MAX_SHARED_FILE_BYTES:
+                raise HTTPException(status_code=413, detail="Maximum file size is 8 MB")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=422, detail="The selected file is empty")
+    if len(body) > MAX_SHARED_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="Maximum file size is 8 MB")
+    if int(recipient_id) == int(user["id"]):
+        raise HTTPException(status_code=422, detail="Cannot send a file to the same account")
+    created = datetime.now(timezone.utc)
+    created_text = created.isoformat()
+    expires_text = (created + timedelta(days=SHARED_FILE_TTL_DAYS)).isoformat()
+    with connect() as db:
+        link = _approved_screen_link(db, int(user["id"]), int(recipient_id))
+        cur = db.execute(
+            """INSERT INTO shared_files
+               (sender_id, recipient_id, filename, content_type, size_bytes, file_data, created_at, expires_at)
+               VALUES(?,?,?,?,?,?,?,?) RETURNING id""",
+            (user["id"], recipient_id, clean_name, content_type, len(body), body, created_text, expires_text),
+        )
+        file_id = cur.fetchone()["id"]
+    return {"id": file_id, "filename": clean_name, "content_type": content_type,
+            "size_bytes": len(body), "created_at": created_text, "expires_at": expires_text,
+            "status": "stored_privately"}
+
+
+@app.get("/api/files")
+def list_shared_files(user: CurrentUser, direction: str = Query(default="all", pattern=r"^(all|sent|received)$")):
+    current_time = now()
+    with connect() as db:
+        db.execute("DELETE FROM shared_files WHERE expires_at<=?", (current_time,))
+        rows = db.execute(
+            """SELECT f.id, f.sender_id, f.recipient_id, f.filename, f.content_type, f.size_bytes,
+                      f.created_at, f.expires_at, s.username AS sender_username, r.username AS recipient_username
+               FROM shared_files f
+               JOIN users s ON s.id=f.sender_id JOIN users r ON r.id=f.recipient_id
+               JOIN device_links l ON l.status='approved'
+                 AND ((l.controller_id=f.sender_id AND l.target_id=f.recipient_id)
+                   OR (l.controller_id=f.recipient_id AND l.target_id=f.sender_id))
+               WHERE (f.sender_id=? OR f.recipient_id=?) AND f.expires_at>?
+               ORDER BY f.id DESC LIMIT 100""",
+            (user["id"], user["id"], current_time),
+        ).fetchall()
+    result = [_file_metadata(row, int(user["id"])) for row in rows]
+    if direction != "all":
+        result = [item for item in result if item["direction"] == direction]
+    return result
+
+
+@app.get("/api/files/{file_id}/download")
+def download_shared_file(file_id: int, user: CurrentUser):
+    current_time = now()
+    with connect() as db:
+        row = db.execute(
+            """SELECT f.*, s.username AS sender_username, r.username AS recipient_username
+               FROM shared_files f JOIN users s ON s.id=f.sender_id JOIN users r ON r.id=f.recipient_id
+               WHERE f.id=? AND (f.sender_id=? OR f.recipient_id=?) AND f.expires_at>?""",
+            (file_id, user["id"], user["id"], current_time),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="File not found or expired")
+        peer_id = row["recipient_id"] if int(row["sender_id"]) == int(user["id"]) else row["sender_id"]
+        _approved_screen_link(db, int(user["id"]), int(peer_id))
+        data = bytes(row["file_data"])
+        filename = row["filename"]
+        media_type = row["content_type"]
+    safe_ascii = "".join(ch if 32 <= ord(ch) < 127 and ch not in '\"\\\\' else "_" for ch in filename)
+    from urllib.parse import quote
+    disposition = f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{quote(filename)}'
+    return Response(content=data, media_type=media_type,
+                    headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@app.delete("/api/files/{file_id}")
+def delete_shared_file(file_id: int, user: CurrentUser):
+    with connect() as db:
+        row = db.execute("SELECT id, sender_id, recipient_id FROM shared_files WHERE id=?", (file_id,)).fetchone()
+        if not row or int(user["id"]) not in (int(row["sender_id"]), int(row["recipient_id"])):
+            raise HTTPException(status_code=404, detail="File not found")
+        peer_id = row["recipient_id"] if int(row["sender_id"]) == int(user["id"]) else row["sender_id"]
+        _approved_screen_link(db, int(user["id"]), int(peer_id))
+        db.execute("DELETE FROM shared_files WHERE id=?", (file_id,))
+    return {"id": file_id, "deleted": True}
