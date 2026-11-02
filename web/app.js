@@ -367,6 +367,10 @@ async function refreshScreenSessions() {
         });
         card.append(actions);
       }
+      if (["accepted", "active"].includes(item.status) && Number(item.controller_id) === Number(currentUser?.id)) {
+        const watch = document.createElement("button"); watch.className = "primary"; watch.type = "button"; watch.textContent = "مشاهدة الشاشة";
+        watch.addEventListener("click", () => startScreenViewer(item)); card.append(watch);
+      }
       if (["requested", "accepted", "active"].includes(item.status)) {
         const stop = document.createElement("button");
         stop.className = "secondary";
@@ -384,6 +388,54 @@ async function refreshScreenSessions() {
       list.append(card);
     });
   } catch (error) { emptyMessage(list, error.message); }
+}
+// WebRTC browser viewer. The Android client must publish its consented MediaProjection track.
+let viewerPc = null, viewerTimer = null, viewerAfter = 0, viewerSession = 0, viewerBusy = false;
+async function viewerSignal(id, kind, payload) {
+  return api('/api/screen-sessions/' + id + '/signals', {method:'POST', body:JSON.stringify({kind, payload:payload || {}})});
+}
+function closeViewer(message) {
+  if (viewerTimer) clearInterval(viewerTimer); viewerTimer = null;
+  if (viewerPc) { viewerPc.onicecandidate = null; viewerPc.close(); }
+  viewerPc = null; viewerSession = 0; viewerAfter = 0;
+  const video = document.querySelector('#screenVideo'); if (video) { video.pause(); video.srcObject = null; }
+  const status = document.querySelector('#screenViewerStatus'); if (status) status.textContent = 'غير متصل';
+  const note = document.querySelector('#screenViewerMessage'); if (note) note.textContent = message || 'لا يوجد بث فيديو حاليًا.';
+}
+async function pollViewerSignals() {
+  if (!viewerPc || !viewerSession || viewerBusy || document.hidden) return;
+  viewerBusy = true;
+  try {
+    const data = await api('/api/screen-sessions/' + viewerSession + '/signals?after_id=' + viewerAfter);
+    for (const item of (data.signals || [])) {
+      viewerAfter = Math.max(viewerAfter, Number(item.id) || 0);
+      if (item.kind === 'stop') { closeViewer('أوقف الطرف الآخر مشاركة الشاشة.'); return; }
+      if (item.kind === 'answer' && item.payload && item.payload.type === 'answer' && !viewerPc.remoteDescription) await viewerPc.setRemoteDescription(item.payload);
+      if (item.kind === 'ice' && item.payload && item.payload.candidate) { try { await viewerPc.addIceCandidate(new RTCIceCandidate(item.payload)); } catch (e) { console.warn('ICE candidate rejected', e); } }
+    }
+    if (data.status === 'stopped') closeViewer('انتهت جلسة مشاركة الشاشة.');
+  } catch (e) { const n = document.querySelector('#screenViewerMessage'); if (n) n.textContent = 'تعذّر تحديث الاتصال: ' + e.message; }
+  finally { viewerBusy = false; }
+}
+async function startScreenViewer(item) {
+  closeViewer('جارٍ تجهيز اتصال WebRTC...');
+  if (!window.RTCPeerConnection) { closeViewer('المتصفح لا يدعم WebRTC.'); return; }
+  viewerSession = Number(item.id);
+  try {
+    viewerPc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    viewerPc.addTransceiver('video', {direction:'recvonly'});
+    viewerPc.ontrack = event => {
+      const v = document.querySelector('#screenVideo'); if (v && event.streams[0]) { v.srcObject = event.streams[0]; v.play().catch(() => {}); }
+      const s = document.querySelector('#screenViewerStatus'); if (s) s.textContent = 'وصل الفيديو';
+      const n = document.querySelector('#screenViewerMessage'); if (n) n.textContent = 'يصل بث شاشة الهاتف عبر WebRTC.';
+    };
+    viewerPc.onicecandidate = event => { if (event.candidate && viewerSession === Number(item.id)) viewerSignal(item.id, 'ice', event.candidate.toJSON()).catch(console.error); };
+    viewerPc.onconnectionstatechange = () => { const s = document.querySelector('#screenViewerStatus'); if (s && viewerPc) s.textContent = viewerPc.connectionState; };
+    const offer = await viewerPc.createOffer(); await viewerPc.setLocalDescription(offer);
+    await viewerSignal(item.id, 'offer', {type:offer.type, sdp:offer.sdp});
+    viewerAfter = 0; viewerTimer = setInterval(pollViewerSignals, 1000); await pollViewerSignals();
+    const n = document.querySelector('#screenViewerMessage'); if (n) n.textContent = 'أُرسل عرض الاتصال. افتح الهاتف ووافق على التقاط الشاشة.';
+  } catch (e) { closeViewer('تعذّر بدء العرض: ' + e.message); }
 }
 async function refreshScreenAll() {
   await Promise.allSettled([refreshScreenTargets(), refreshScreenSessions()]);
