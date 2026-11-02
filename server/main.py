@@ -1116,7 +1116,8 @@ def poll_screen_signals(session_id: int, user: CurrentUser, after_id: int = Quer
         if not session or int(user["id"]) not in (int(session["controller_id"]), int(session["target_id"])):
             raise HTTPException(status_code=404, detail="Screen-sharing session not found")
         peer_id = session["target_id"] if int(user["id"]) == int(session["controller_id"]) else session["controller_id"]
-        _approved_screen_link(db, int(user["id"]), int(peer_id))
+        if session["status"] != "stopped":
+            _approved_screen_link(db, int(user["id"]), int(peer_id))
         rows = db.execute(
             """SELECT id, sender_id, kind, payload, created_at FROM screen_signals
                WHERE session_id=? AND recipient_id=? AND id>? ORDER BY id LIMIT 100""",
