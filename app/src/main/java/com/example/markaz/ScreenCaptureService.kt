@@ -34,6 +34,7 @@ class ScreenCaptureService : Service() {
     private var textureHelper: SurfaceTextureHelper? = null
     private var egl: EglBase? = null
     private var lastSignalId = 0L
+    private val pendingRemoteIce = mutableListOf<IceCandidate>()
     private var pollThread: Thread? = null
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -73,7 +74,7 @@ class ScreenCaptureService : Service() {
             }) ?: throw IllegalStateException("تعذر إنشاء اتصال WebRTC")
             val source = factory!!.createVideoSource(true); videoSource = source
             textureHelper = SurfaceTextureHelper.create("MarkazScreenCapture", egl!!.eglBaseContext)
-            capturer = ScreenCapturerAndroid(projectionData, object : MediaProjection.Callback() { override fun onStop() { main.post { stopStreaming() } } })
+            capturer = ScreenCapturerAndroid(projectionData!!, object : MediaProjection.Callback() { override fun onStop() { main.post { stopStreaming() } } })
             capturer!!.initialize(textureHelper, this, source.capturerObserver); capturer!!.startCapture(1280, 720, 15)
             val track = factory!!.createVideoTrack("markaz-screen", source); peer!!.addTrack(track, listOf("markaz-screen-stream"))
             startSignalPolling()
@@ -99,7 +100,9 @@ class ScreenCaptureService : Service() {
             "offer" -> {
                 val offer = SessionDescription(SessionDescription.Type.OFFER, payload.optString("sdp"))
                 pc.setRemoteDescription(object : SdpObserver {
-                    override fun onSetSuccess() { pc.createAnswer(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        synchronized(pendingRemoteIce) { pendingRemoteIce.forEach { pc.addIceCandidate(it) }; pendingRemoteIce.clear() }
+                        pc.createAnswer(object : SdpObserver {
                         override fun onCreateSuccess(answer: SessionDescription?) { if (answer == null) return; pc.setLocalDescription(object : SdpObserver {
                             override fun onSetSuccess() { sendSignal("answer", JSONObject().put("type", "answer").put("sdp", answer.description)) }
                             override fun onSetFailure(error: String?) {}
@@ -115,7 +118,10 @@ class ScreenCaptureService : Service() {
                     override fun onCreateFailure(error: String?) {}
                 }, offer)
             }
-            "ice" -> try { pc.addIceCandidate(IceCandidate(payload.optString("sdpMid"), payload.optInt("sdpMLineIndex"), payload.optString("candidate"))) } catch (_: Exception) {}
+            "ice" -> try {
+                val candidate = IceCandidate(payload.optString("sdpMid"), payload.optInt("sdpMLineIndex"), payload.optString("candidate"))
+                if (pc.remoteDescription == null) synchronized(pendingRemoteIce) { pendingRemoteIce.add(candidate) } else pc.addIceCandidate(candidate)
+            } catch (_: Exception) {}
         }
     }
     private fun sendSignal(kind: String, payload: JSONObject) { Thread { try { request("POST", "/api/screen-sessions/$sessionId/signals", JSONObject().put("kind", kind).put("payload", payload)) } catch (_: Exception) {} }.start() }
@@ -129,6 +135,7 @@ class ScreenCaptureService : Service() {
     private fun createChannel() { if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "مشاركة الشاشة", NotificationManager.IMPORTANCE_LOW)) }
     private fun stopStreaming() {
         if (!running.getAndSet(false)) { stopSelf(); return }
+        Thread { try { request("POST", "/api/screen-sessions/$sessionId/stop") } catch (_: Exception) {} }.start()
         try { capturer?.stopCapture() } catch (_: Exception) {}
         try { capturer?.dispose() } catch (_: Exception) {}
         try { videoSource?.dispose() } catch (_: Exception) {}
