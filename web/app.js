@@ -452,8 +452,10 @@ async function pollBrowserReceiver() {
         result = {simulation:true, execution_mode:"browser_simulation", message:"تم استلام الأمر في جلسة المتصفح فقط.", account:currentUser.username, browser_session:"active", physical_device_status:"not_checked"};
       } else if (command.command === "/device") {
         result = {simulation:true, execution_mode:"browser_simulation", message:"هذه بيانات جلسة الويب وليست بيانات هاتف فعلي.", account:currentUser.username, client:"web-browser", physical_device_info:"not_available"};
+      } else if (command.command === "/sync") {
+        result = {simulation:true, execution_mode:"browser_simulation", message:"هذه مزامنة تجريبية لجلسة المتصفح وليست مزامنة هاتف فعلي.", client:"web-browser", app_version:"not_applicable", synced_at:Date.now(), physical_device_info:"not_available"};
       } else if (command.command === "/help") {
-        result = {simulation:true, execution_mode:"browser_simulation", supported_commands:["/status","/device","/help"], message:"محاكاة استقبال الأوامر في المتصفح فقط."};
+        result = {simulation:true, execution_mode:"browser_simulation", supported_commands:["/status","/device","/sync","/help"], message:"محاكاة استقبال الأوامر في المتصفح فقط."};
       } else {
         await api("/api/commands/" + command.id + "/result", {method:"POST", body:JSON.stringify({status:"failed", result:{simulation:true, execution_mode:"browser_simulation", error:"Unsupported command"}})});
         continue;
