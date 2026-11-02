@@ -1160,6 +1160,11 @@ def send_screen_signal(session_id: int, payload: ScreenSignalCreate, user: Curre
         data = {"state": state, "message": message}
     else:
         data = {}
+    # Keep compatibility with deployed database CHECK constraints.
+    # Diagnostics are stored as marked ICE records and translated on poll.
+    stored_kind = "ice" if payload.kind == "status" else payload.kind
+    if payload.kind == "status":
+        data = {"__markaz_status__": True, **data}
     serialized = json.dumps(data, separators=(",", ":"), ensure_ascii=True)
     if len(serialized) > 12000:
         raise HTTPException(status_code=413, detail="Signaling payload is too large")
@@ -1178,7 +1183,7 @@ def send_screen_signal(session_id: int, payload: ScreenSignalCreate, user: Curre
         cur = db.execute(
             """INSERT INTO screen_signals(session_id, sender_id, recipient_id, kind, payload, created_at)
                VALUES(?,?,?,?,?,?) RETURNING id""",
-            (session_id, user["id"], recipient_id, payload.kind, serialized, now()),
+            (session_id, user["id"], recipient_id, stored_kind, serialized, now()),
         )
         signal_id = cur.fetchone()["id"]
         if payload.kind == "stop":
@@ -1211,6 +1216,8 @@ def poll_screen_signals(session_id: int, user: CurrentUser, after_id: int = Quer
             item["payload"] = json.loads(item["payload"])
         except (TypeError, ValueError):
             item["payload"] = {}
+        if item["kind"] == "ice" and isinstance(item["payload"], dict) and item["payload"].pop("__markaz_status__", False):
+            item["kind"] = "status"
         result.append(item)
     return {"status": session["status"], "signals": result}
 
