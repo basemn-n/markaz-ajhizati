@@ -416,6 +416,7 @@ private fun MarkazApp(activity: MainActivity) {
     var incoming by remember { mutableStateOf<List<PairItem>>(emptyList()) }
     var outgoing by remember { mutableStateOf<List<PairItem>>(emptyList()) }
     var screenSessions by remember { mutableStateOf<List<ScreenSessionItem>>(emptyList()) }
+    var pendingScreenCaptureSessionId by remember { mutableLongStateOf(0L) }
     var pairingCode by remember { mutableStateOf("") }
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -467,6 +468,26 @@ private fun MarkazApp(activity: MainActivity) {
                 activity.runOnUiThread { notice = "تم تنزيل " + item.filename + " وحفظه في الموقع الذي اخترته."; fileBusy = false; pendingDownload = null }
             } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر تنزيل الملف."; fileBusy = false; pendingDownload = null } } }
         } else pendingDownload = null
+    }
+
+    val screenCaptureLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val sessionId = pendingScreenCaptureSessionId
+        pendingScreenCaptureSessionId = 0L
+        val authToken = token
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null && authToken != null && sessionId > 0L) {
+            val serviceIntent = Intent(activity, ScreenCaptureService::class.java)
+                .putExtra(ScreenCaptureService.EXTRA_TOKEN, authToken)
+                .putExtra(ScreenCaptureService.EXTRA_SESSION_ID, sessionId)
+                .putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                .putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) androidx.core.content.ContextCompat.startForegroundService(activity, serviceIntent)
+                else activity.startService(serviceIntent)
+                notice = "بدأ تجهيز بث الشاشة. سيظهر إشعار دائم ويمكنك إيقاف المشاركة منه."
+            } catch (e: Exception) { notice = "تعذر تشغيل خدمة بث الشاشة: " + (e.message ?: "خطأ غير معروف") }
+        } else { notice = "لم تتم الموافقة على التقاط الشاشة؛ لم يبدأ البث." }
     }
 
     val deviceName = remember {
@@ -738,10 +759,13 @@ private fun MarkazApp(activity: MainActivity) {
                 )
                 if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
                 activity.runOnUiThread {
-                    notice = if (accepted)
-                        "وافقت على الطلب. لم يبدأ بث الشاشة؛ يلزم تفعيل التقاط الشاشة بموافقتك من أندرويد."
-                    else "تم رفض طلب مشاركة الشاشة."
+                    notice = if (accepted) "يرجى الموافقة على نافذة أندرويد لبدء مشاركة الشاشة." else "تم رفض طلب مشاركة الشاشة."
                     busy = false
+                    if (accepted) {
+                        pendingScreenCaptureSessionId = item.id
+                        val manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                        screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+                    }
                     refreshScreenSessions(authToken)
                 }
             } catch (e: Exception) {
