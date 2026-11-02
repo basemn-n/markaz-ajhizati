@@ -49,6 +49,7 @@
       <button class="tab" data-tab="screen" type="button">مشاركة الشاشة</button>
       <button class="tab" data-tab="commands" type="button">أوامر الجهاز</button>
       <button class="tab" data-tab="chats" type="button">المحادثات</button>
+      <button class="tab" data-tab="files" type="button">الملفات</button>
     </nav>
 
     <section id="devices" class="panel">
@@ -128,6 +129,22 @@
       <div class="section-heading"><div><h2>سجل الأوامر</h2><p class="muted">يُحدّث السجل تلقائيًا أثناء فتح هذا التبويب.</p></div></div>
       <div id="commandList" class="device-list"></div>
       <div class="notice">الحالات تعكس ما سجّله الخادم فقط. لن تظهر نتيجة فعلية حتى يستلم العميل الأمر وينفذه ويرسل النتيجة.</div>
+    </section>
+
+    <section id="files" class="panel hidden">
+      <div class="section-heading"><div><h2>مشاركة الملفات</h2><p class="muted">اختر ملفًا من جهازك وأرسله إلى حساب مرتبط وموافق عليه. الحد الأقصى 8 ميجابايت، وتنتهي صلاحية الملفات بعد 7 أيام.</p></div><button id="refreshFilesBtn" class="secondary" type="button">تحديث</button></div>
+      <div class="card">
+        <form id="fileShareForm" class="chat-form">
+          <label for="fileRecipientSelect">إرسال إلى الحساب المرتبط</label>
+          <select id="fileRecipientSelect" required></select>
+          <label for="sharedFileInput">اختر الملف</label>
+          <input id="sharedFileInput" type="file" required>
+          <button id="sendSharedFileBtn" class="primary" type="submit">إرسال الملف</button>
+        </form>
+        <div id="fileShareNotice" class="notice" role="status">اختر حسابًا مرتبطًا ثم حدد الملف لإرساله.</div>
+      </div>
+      <div class="section-heading"><div><h2>الملفات المرسلة والواردة</h2><p class="muted">التنزيل يبدأ فقط عند ضغطك على الزر، ويُتحقق من صلاحية الربط في كل مرة.</p></div></div>
+      <div id="sharedFileList" class="device-list"></div>
     </section>
 
     <section id="chats" class="panel hidden">
