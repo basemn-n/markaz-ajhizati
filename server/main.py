@@ -1070,7 +1070,15 @@ def list_screen_sessions(user: CurrentUser):
                       c.username AS controller_username, t.username AS target_username
                FROM screen_sessions s
                JOIN users c ON c.id=s.controller_id JOIN users t ON t.id=s.target_id
-               WHERE (s.controller_id=? OR s.target_id=?) AND s.status IN ('requested','accepted','active')
+               WHERE (s.controller_id=? OR s.target_id=?)
+                 AND s.status IN ('requested','accepted','active')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM screen_sessions newer
+                   WHERE newer.controller_id=s.controller_id
+                     AND newer.target_id=s.target_id
+                     AND newer.status IN ('requested','accepted','active')
+                     AND newer.id>s.id
+                 )
                ORDER BY s.id DESC LIMIT 50""",
             (user["id"], user["id"]),
         ).fetchall()
