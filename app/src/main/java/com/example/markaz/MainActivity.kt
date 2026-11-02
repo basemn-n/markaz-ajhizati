@@ -1051,15 +1051,25 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
-                    TabRow(selectedTabIndex = activeTab) {
-                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("الأجهزة") })
-                        Tab(selected = activeTab == 1, onClick = {
-                            activeTab = 1
-                            token?.let { refreshChatData(it) }
-                        }, text = { Text("المحادثات") })
-                        Tab(selected = activeTab == 2, onClick = { activeTab = 2; token?.let { refreshPairings(it); refreshSharedFiles(it) } }, text = { Text("الملفات") })
+                    val navItems = listOf("الأجهزة", "طلبات الربط", "مشاركة الشاشة", "الحسابات", "المحادثات", "الملفات")
+                    ScrollableTabRow(selectedTabIndex = activeTab, edgePadding = 0.dp) {
+                        navItems.forEachIndexed { index, label ->
+                            Tab(selected = activeTab == index, onClick = {
+                                activeTab = index
+                                val authToken = token
+                                if (authToken != null) when (index) {
+                                    1 -> refreshPairings(authToken)
+                                    2 -> refreshScreenSessions(authToken)
+                                    3 -> refreshPairings(authToken)
+                                    4 -> refreshChatData(authToken)
+                                    5 -> { refreshPairings(authToken); refreshSharedFiles(authToken) }
+                                }
+                            }, text = { Text(label, maxLines = 1) })
+                        }
                     }
-                    if (activeTab == 0) {
+                    Spacer(Modifier.height(8.dp))
+                    when (activeTab) {
+                        0 -> {
                     Text("الأجهزة المسجلة في الحساب", fontSize = 19.sp, fontWeight = FontWeight.Bold)
                     if (devices.isEmpty()) {
                         Text("لا توجد أجهزة مسجلة بعد.")
@@ -1084,6 +1094,8 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
+                        }
+                        1 -> {
                     Divider()
                     Text("ربط الحسابات", fontSize = 19.sp, fontWeight = FontWeight.Bold)
                     Text("الربط يحتاج موافقة صاحب الحساب الآخر. لا يفعّل التحكم بالجهاز أو الوصول إلى الشاشة والملفات.",
@@ -1127,6 +1139,8 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
+                        }
+                        2 -> {
                     Divider()
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1180,6 +1194,8 @@ private fun MarkazApp(activity: MainActivity) {
                                 }
                             }
                         }
+                        }
+                        3 -> {
                     Text("الحسابات المرتبطة", fontWeight = FontWeight.Bold)
                     if (outgoing.isEmpty()) Text("لا توجد روابط صادرة من هذا الحساب.", fontSize = 13.sp)
                     outgoing.forEach { item ->
@@ -1198,8 +1214,9 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                     }
-                    Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    } else if (activeTab == 2) {
+                            Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        5 -> {
                         Text("مشاركة الملفات", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                         Text("اختر ملفًا يدويًا من الهاتف وأرسله إلى حساب مرتبط وموافق عليه. الحد الأقصى 8 ميجابايت، وتُحذف الملفات تلقائيًا بعد 7 أيام.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("إرسال ملف إلى", fontWeight = FontWeight.SemiBold)
@@ -1225,7 +1242,8 @@ private fun MarkazApp(activity: MainActivity) {
                             }
                         }
                         Text(notice, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
+                        }
+                        else -> {
                         Text("المحادثات", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                         Text("راسل الحسابات التي وافقت على ربطها بحسابك. لا يمكن مراسلة حساب غير مرتبط.",
                             fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1302,6 +1320,8 @@ private fun MarkazApp(activity: MainActivity) {
                                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(chatNotice, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                     }
                 }
             }
