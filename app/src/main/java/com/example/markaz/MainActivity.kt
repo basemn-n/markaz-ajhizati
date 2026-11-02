@@ -54,7 +54,8 @@ private data class DeviceItem(
 private data class PairItem(
     val id: Long,
     val username: String,
-    val status: String
+    val status: String,
+    val targetUserId: Long = 0L
 )
 
 private data class ChatMessageItem(
@@ -77,6 +78,52 @@ private data class ApiResult(
     val status: Int,
     val body: String
 )
+
+private data class SharedFileItem(val id: Long, val filename: String, val contentType: String, val sizeBytes: Long, val direction: String, val peerUsername: String)
+
+private fun uploadSelectedFile(context: Context, uri: Uri, authToken: String, recipientId: Long): JSONObject {
+    val resolver = context.contentResolver
+    val filename = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null } ?: "shared-file"
+    val mime = resolver.getType(uri) ?: "application/octet-stream"
+    val encodedName = java.net.URLEncoder.encode(filename, "UTF-8")
+    val connection = (URL("$API_BASE/api/files?recipient_id=$recipientId&filename=$encodedName").openConnection() as HttpURLConnection)
+    try {
+        connection.requestMethod = "POST"; connection.connectTimeout = 30000; connection.readTimeout = 60000
+        connection.doOutput = true
+        connection.setRequestProperty("Authorization", "Bearer $authToken")
+        connection.setRequestProperty("Content-Type", mime)
+        resolver.openInputStream(uri)?.use { input ->
+            connection.outputStream.use { output ->
+                val buffer = ByteArray(16384); var total = 0
+                while (true) { val count = input.read(buffer); if (count < 0) break
+                    total += count
+                    if (total > 8 * 1024 * 1024) throw IllegalArgumentException("الحد الأقصى لحجم الملف 8 ميجابايت.")
+                    output.write(buffer, 0, count)
+                }
+            }
+        } ?: throw IllegalStateException("تعذرت قراءة الملف المختار.")
+        val status = connection.responseCode
+        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+        if (status !in 200..299) throw IllegalStateException(errorMessage(ApiResult(status, body)))
+        return JSONObject(body)
+    } finally { connection.disconnect() }
+}
+
+private fun downloadSharedFile(fileId: Long, authToken: String): ByteArray {
+    val connection = (URL("$API_BASE/api/files/$fileId/download").openConnection() as HttpURLConnection)
+    try {
+        connection.connectTimeout = 20000; connection.readTimeout = 60000
+        connection.setRequestProperty("Authorization", "Bearer $authToken")
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            val body = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+            throw IllegalStateException(errorMessage(ApiResult(status, body)))
+        }
+        return connection.inputStream.use { it.readBytes() }
+    } finally { connection.disconnect() }
+}
 
 private fun requestApi(
     method: String,
@@ -380,6 +427,31 @@ private fun MarkazApp(activity: MainActivity) {
     var chatDraft by remember { mutableStateOf("") }
     var chatNotice by remember { mutableStateOf("اختر حسابًا مرتبطًا لعرض المحادثة.") }
     var chatBusy by remember { mutableStateOf(false) }
+    var sharedFiles by remember { mutableStateOf<List<SharedFileItem>>(emptyList()) }
+    var fileBusy by remember { mutableStateOf(false) }
+    var selectedFileRecipient by remember { mutableStateOf<PairItem?>(null) }
+    var pendingDownload by remember { mutableStateOf<SharedFileItem?>(null) }
+    val pickSharedFile = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        val authToken = token; val recipient = selectedFileRecipient
+        if (uri != null && authToken != null && recipient != null) {
+            fileBusy = true
+            network.execute { try {
+                val result = uploadSelectedFile(activity, uri, authToken, recipient.targetUserId)
+                activity.runOnUiThread { notice = "تم إرسال الملف " + result.optString("filename") + " بنجاح."; fileBusy = false; refreshSharedFiles(authToken) }
+            } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر إرسال الملف."; fileBusy = false } } }
+        }
+    }
+    val saveSharedFile = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val item = pendingDownload; val authToken = token
+        if (uri != null && item != null && authToken != null) {
+            fileBusy = true
+            network.execute { try {
+                val bytes = downloadSharedFile(item.id, authToken)
+                activity.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw IllegalStateException("تعذر حفظ الملف في الموقع المختار.")
+                activity.runOnUiThread { notice = "تم تنزيل " + item.filename + " وحفظه في الموقع الذي اخترته."; fileBusy = false; pendingDownload = null }
+            } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر تنزيل الملف."; fileBusy = false; pendingDownload = null } } }
+        } else pendingDownload = null
+    }
 
     val deviceName = remember {
         val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
@@ -508,7 +580,7 @@ private fun MarkazApp(activity: MainActivity) {
                     val array = JSONArray(outResult.body)
                     for (i in 0 until array.length()) {
                         val item = array.getJSONObject(i)
-                        add(PairItem(item.optLong("id"), item.optString("target_username", "حساب"), item.optString("status", "pending")))
+                        add(PairItem(item.optLong("id"), item.optString("target_username", "حساب"), item.optString("status", "pending"), item.optLong("target_user_id")))
                     }
                 }
                 activity.runOnUiThread {
@@ -566,6 +638,26 @@ private fun MarkazApp(activity: MainActivity) {
             }
         }
     }
+
+
+    fun refreshSharedFiles(authToken: String) {
+        network.execute { try {
+            val result = requestApi("GET", "/api/files", authToken)
+            if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+            val array = JSONArray(result.body)
+            val parsed = buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    add(SharedFileItem(item.optLong("id"), item.optString("filename"), item.optString("content_type"),
+                        item.optLong("size_bytes"), item.optString("direction"),
+                        if (item.optString("direction") == "sent") item.optString("recipient_username") else item.optString("sender_username")))
+                }
+            }
+            activity.runOnUiThread { sharedFiles = parsed }
+        } catch (e: Exception) { activity.runOnUiThread { notice = e.message ?: "تعذر تحديث الملفات." } } }
+    }
+    fun startFilePicker(recipient: PairItem) { selectedFileRecipient = recipient; pickSharedFile.launch(arrayOf("*/*")) }
+    fun startFileDownload(item: SharedFileItem) { pendingDownload = item; saveSharedFile.launch(item.filename) }
 
     fun sendChatMessage(authToken: String) {
         val recipient = selectedChatUsername
@@ -965,6 +1057,7 @@ private fun MarkazApp(activity: MainActivity) {
                             activeTab = 1
                             token?.let { refreshChatData(it) }
                         }, text = { Text("المحادثات") })
+                        Tab(selected = activeTab == 2, onClick = { activeTab = 2; token?.let { refreshPairings(it); refreshSharedFiles(it) } }, text = { Text("الملفات") })
                     }
                     if (activeTab == 0) {
                     Text("الأجهزة المسجلة في الحساب", fontSize = 19.sp, fontWeight = FontWeight.Bold)
@@ -1106,6 +1199,32 @@ private fun MarkazApp(activity: MainActivity) {
                         }
                     }
                     Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    } else if (activeTab == 2) {
+                        Text("مشاركة الملفات", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("اختر ملفًا يدويًا من الهاتف وأرسله إلى حساب مرتبط وموافق عليه. الحد الأقصى 8 ميجابايت، وتُحذف الملفات تلقائيًا بعد 7 أيام.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("إرسال ملف إلى", fontWeight = FontWeight.SemiBold)
+                        if (outgoing.none { it.status == "approved" }) Text("لا توجد حسابات مرتبطة وموافق عليها.")
+                        outgoing.filter { it.status == "approved" }.forEach { contact ->
+                            OutlinedButton(onClick = { startFilePicker(contact) }, enabled = !fileBusy, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (fileBusy) "جارٍ الإرسال..." else "اختيار ملف وإرساله إلى " + contact.username)
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("الملفات المرسلة والواردة", fontWeight = FontWeight.Bold)
+                            TextButton(onClick = { token?.let { refreshSharedFiles(it) } }, enabled = !fileBusy) { Text("تحديث") }
+                        }
+                        if (sharedFiles.isEmpty()) Text("لا توجد ملفات محفوظة حاليًا.")
+                        sharedFiles.forEach { item ->
+                            Card(shape = RoundedCornerShape(14.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(item.filename, fontWeight = FontWeight.SemiBold)
+                                    Text((if (item.direction == "sent") "إلى " else "من ") + item.peerUsername + " · " + "%.2f".format(item.sizeBytes / 1048576.0) + " MB",
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    TextButton(onClick = { startFileDownload(item) }, enabled = !fileBusy) { Text("تنزيل إلى موقع أختاره") }
+                                }
+                            }
+                        }
+                        Text(notice, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Text("المحادثات", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                         Text("راسل الحسابات التي وافقت على ربطها بحسابك. لا يمكن مراسلة حساب غير مرتبط.",
