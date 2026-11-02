@@ -1246,11 +1246,16 @@ async def upload_shared_file(
                 raise HTTPException(status_code=413, detail="Maximum file size is 8 MB")
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid Content-Length")
-    body = await request.body()
+    chunks = []
+    total_bytes = 0
+    async for chunk in request.stream():
+        total_bytes += len(chunk)
+        if total_bytes > MAX_SHARED_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="Maximum file size is 8 MB")
+        chunks.append(chunk)
+    body = b"".join(chunks)
     if not body:
         raise HTTPException(status_code=422, detail="The selected file is empty")
-    if len(body) > MAX_SHARED_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="Maximum file size is 8 MB")
     if int(recipient_id) == int(user["id"]):
         raise HTTPException(status_code=422, detail="Cannot send a file to the same account")
     created = datetime.now(timezone.utc)
