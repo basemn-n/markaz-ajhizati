@@ -27,36 +27,36 @@ android {
     // Legacy native-library packaging for broader OEM installer compatibility.
     packaging { jniLibs.useLegacyPackaging = true }
 
-    // Internal test build uses Android's debug signing unless a persistent release key is configured.
+    // Release builds must always use the same persistent signing identity.
+    // Never silently fall back to a debug or temporary key.
     val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
     val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
     val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
     val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
+    if (releaseStoreFile.isNullOrBlank() ||
+        releaseStorePassword.isNullOrBlank() ||
+        releaseKeyAlias.isNullOrBlank() ||
+        releaseKeyPassword.isNullOrBlank()
+    ) {
+        throw GradleException(
+            "Release signing is not configured. Set ANDROID_KEYSTORE_PATH, " +
+                "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD."
+        )
+    }
+
     signingConfigs {
-        if (!releaseStoreFile.isNullOrBlank() &&
-            !releaseStorePassword.isNullOrBlank() &&
-            !releaseKeyAlias.isNullOrBlank() &&
-            !releaseKeyPassword.isNullOrBlank()
-        ) {
-            create("stableRelease") {
-                storeFile = file(releaseStoreFile)
-                storePassword = releaseStorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
-            }
+        create("stableRelease") {
+            storeFile = file(releaseStoreFile)
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
         }
     }
 
     buildTypes {
         getByName("release") {
-            signingConfig = if (
-                !releaseStoreFile.isNullOrBlank() &&
-                !releaseStorePassword.isNullOrBlank() &&
-                !releaseKeyAlias.isNullOrBlank() &&
-                !releaseKeyPassword.isNullOrBlank()
-            ) signingConfigs.getByName("stableRelease")
-            else signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("stableRelease")
             isMinifyEnabled = false
         }
     }
