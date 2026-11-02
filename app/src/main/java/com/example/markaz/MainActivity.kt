@@ -177,10 +177,25 @@ private fun pollAndExecuteCommands(authToken: String, deviceName: String) {
                         .put("synced_at", System.currentTimeMillis())
                     "completed"
                 }
+                "/diagnostics" -> {
+                    resultPayload
+                        .put("device_name", deviceName)
+                        .put("manufacturer", Build.MANUFACTURER.orEmpty())
+                        .put("model", Build.MODEL.orEmpty())
+                        .put("android_version", Build.VERSION.RELEASE.orEmpty())
+                        .put("sdk_int", Build.VERSION.SDK_INT)
+                        .put("app_version", BuildConfig.VERSION_NAME)
+                        .put("app_id", packageName)
+                        .put("uptime_ms", android.os.SystemClock.elapsedRealtime())
+                        .put("checked_at", System.currentTimeMillis())
+                        .put("network_check", "api_reachable")
+                        .put("notes", "لا يتضمن التقرير أرقامًا تسلسلية أو محتوى التطبيقات أو الملفات.")
+                    "completed"
+                }
                 "/help" -> {
                     resultPayload
-                        .put("commands", JSONArray(listOf("/status", "/device", "/sync", "/help")))
-                        .put("message", "هذه أوامر معلوماتية فقط؛ لا تنفذ أوامر نظام أو تتحكم بالجهاز.")
+                        .put("commands", JSONArray(listOf("/status", "/device", "/sync", "/help", "/diagnostics")))
+                        .put("message", "أوامر معلوماتية محددة فقط؛ لا تنفذ أوامر نظام أو تتحكم بالجهاز.")
                     "completed"
                 }
                 else -> {
