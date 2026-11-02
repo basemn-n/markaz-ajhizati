@@ -1078,8 +1078,32 @@ def decide_screen_session(session_id: int, payload: ScreenSessionDecision, user:
 
 @app.post("/api/screen-sessions/{session_id}/signals", status_code=201)
 def send_screen_signal(session_id: int, payload: ScreenSignalCreate, user: CurrentUser):
-    """Store a bounded WebRTC signaling message for the other participant."""
-    serialized = json.dumps(payload.payload, separators=(",", ":"), ensure_ascii=True)
+    """Store a bounded, type-checked WebRTC signaling message for the other participant."""
+    data = payload.payload
+    # Accept only the minimal WebRTC fields needed for offer/answer/ICE.
+    # This endpoint is a signaling relay, never a general-purpose data channel.
+    if payload.kind in ("offer", "answer"):
+        expected_type = payload.kind
+        sdp = data.get("sdp")
+        if data.get("type") != expected_type or not isinstance(sdp, str) or not sdp.strip():
+            raise HTTPException(status_code=422, detail=f"A valid {expected_type} SDP payload is required")
+        if len(sdp) > 10000:
+            raise HTTPException(status_code=413, detail="SDP payload is too large")
+        data = {"type": expected_type, "sdp": sdp}
+    elif payload.kind == "ice":
+        candidate = data.get("candidate")
+        if not isinstance(candidate, str) or not candidate.strip() or len(candidate) > 4000:
+            raise HTTPException(status_code=422, detail="A valid ICE candidate is required")
+        sdp_mid = data.get("sdpMid")
+        sdp_mline_index = data.get("sdpMLineIndex")
+        if sdp_mid is not None and (not isinstance(sdp_mid, str) or len(sdp_mid) > 128):
+            raise HTTPException(status_code=422, detail="Invalid ICE sdpMid")
+        if sdp_mline_index is not None and (not isinstance(sdp_mline_index, int) or sdp_mline_index < 0 or sdp_mline_index > 255):
+            raise HTTPException(status_code=422, detail="Invalid ICE sdpMLineIndex")
+        data = {"candidate": candidate, "sdpMid": sdp_mid, "sdpMLineIndex": sdp_mline_index}
+    else:
+        data = {}
+    serialized = json.dumps(data, separators=(",", ":"), ensure_ascii=True)
     if len(serialized) > 12000:
         raise HTTPException(status_code=413, detail="Signaling payload is too large")
     with connect() as db:
