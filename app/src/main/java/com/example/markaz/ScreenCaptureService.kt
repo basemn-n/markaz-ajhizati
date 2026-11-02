@@ -65,7 +65,7 @@ class ScreenCaptureService : Service() {
                     when (state) {
                         PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> sendSignal("status", JSONObject().put("state", "connected"))
                         PeerConnection.IceConnectionState.DISCONNECTED -> sendSignal("status", JSONObject().put("state", "disconnected"))
-                        PeerConnection.IceConnectionState.FAILED -> { sendSignal("status", JSONObject().put("state", "failed").put("message", "ICE connection failed; STUN-only path could not connect.")); main.post { stopStreaming() } }
+                        PeerConnection.IceConnectionState.FAILED -> { sendSignal("status", JSONObject().put("state", "failed").put("message", "ICE connection failed; a TURN relay may be required.")); main.post { stopStreaming(false) } }
                         else -> {}
                     }
                 }
@@ -122,17 +122,17 @@ class ScreenCaptureService : Service() {
                                 sendSignal("answer", JSONObject().put("type", "answer").put("sdp", answer.description))
                                 sendSignal("status", JSONObject().put("state", "answer_sent"))
                             }
-                            override fun onSetFailure(error: String?) {}
+                            override fun onSetFailure(error: String?) { reportRtcFailure("تعذر تثبيت رد الاتصال: " + (error ?: "unknown")) }
                             override fun onCreateSuccess(desc: SessionDescription?) {}
-                            override fun onCreateFailure(error: String?) {}
+                            override fun onCreateFailure(error: String?) { reportRtcFailure("تعذر إنشاء رد الاتصال: " + (error ?: "unknown")) }
                         }, answer) }
                         override fun onSetSuccess() {}
-                        override fun onSetFailure(error: String?) {}
-                        override fun onCreateFailure(error: String?) {}
+                        override fun onSetFailure(error: String?) { reportRtcFailure("تعذر تثبيت الوصف المحلي: " + (error ?: "unknown")) }
+                        override fun onCreateFailure(error: String?) { reportRtcFailure("تعذر إنشاء رد الاتصال: " + (error ?: "unknown")) }
                     }, MediaConstraints()) }
-                    override fun onSetFailure(error: String?) { stopStreaming() }
+                    override fun onSetFailure(error: String?) { reportRtcFailure("رفض الهاتف عرض الاتصال: " + (error ?: "unknown")) }
                     override fun onCreateSuccess(desc: SessionDescription?) {}
-                    override fun onCreateFailure(error: String?) {}
+                    override fun onCreateFailure(error: String?) { reportRtcFailure("تعذر قراءة عرض الاتصال: " + (error ?: "unknown")) }
                 }, offer)
             }
             "ice" -> try {
@@ -141,7 +141,12 @@ class ScreenCaptureService : Service() {
             } catch (_: Exception) {}
         }
     }
-    private fun sendSignal(kind: String, payload: JSONObject) { Thread { try { request("POST", "/api/screen-sessions/$sessionId/signals", JSONObject().put("kind", kind).put("payload", payload)) } catch (_: Exception) {} }.start() }
+    private fun reportRtcFailure(message: String) {
+        Log.e("MarkazScreen", message)
+        sendSignal("status", JSONObject().put("state", "failed").put("message", message.take(250)))
+        main.post { stopStreaming(false) }
+    }
+    private fun sendSignal(kind: String, payload: JSONObject) { Thread { try { request("POST", "/api/screen-sessions/$sessionId/signals", JSONObject().put("kind", kind).put("payload", payload)) } catch (e: Exception) { Log.w("MarkazScreen", "Signal send failed: $kind", e) } }.start() }
     private fun request(method: String, path: String, body: JSONObject? = null): Pair<Int, String> {
         val c = URL(API_BASE + path).openConnection() as HttpURLConnection
         try { c.requestMethod = method; c.connectTimeout = 10000; c.readTimeout = 12000; c.setRequestProperty("Authorization", "Bearer $token"); c.setRequestProperty("Accept", "application/json")
