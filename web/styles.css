@@ -25,3 +25,10 @@
 .chat-empty{margin:auto;text-align:center}
 .chat-footnote{font-size:12px}
 @media(max-width:640px){.chat-form{align-items:stretch}.chat-form input{min-width:0}.message-bubble{max-width:92%}}
+
+/* Screen-share viewer shell: intentionally does not imply that streaming is active. */
+.screen-viewer-card{min-width:0}
+.screen-viewer-status{display:inline-flex;align-items:center;border-radius:999px;padding:6px 11px;background:#eef2f8;color:#53627a;font-size:12px;font-weight:800;white-space:nowrap}
+.screen-video{display:block;width:100%;max-height:68vh;min-height:220px;aspect-ratio:16/9;object-fit:contain;background:#101827;border:1px solid #26344b;border-radius:14px}
+.screen-viewer-message{margin-top:12px;font-size:13px}
+@media(max-width:640px){.screen-video{min-height:180px;max-height:55vh}}
