@@ -308,7 +308,6 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_shared_files_recipient ON shared_files(recipient_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_shared_files_sender ON shared_files(sender_id, id DESC);
             """)
-        else:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(device_commands)").fetchall()}
             if "claimed_at" not in columns:
                 db.execute("ALTER TABLE device_commands ADD COLUMN claimed_at TEXT")
