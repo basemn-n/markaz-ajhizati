@@ -80,10 +80,10 @@
     </section>
 
     <section id="screen" class="panel hidden">
-      <div class="section-heading"><div><h2>مشاركة الشاشة</h2><p class="muted">إرسال طلب ومراجعته فقط. البث الفعلي لم يُفعّل بعد.</p></div><button id="refreshScreenBtn" class="secondary" type="button">تحديث</button></div>
+      <div class="section-heading"><div><h2>مشاركة الشاشة</h2><p class="muted">إرسال طلب إلى الهاتف المرتبط، ثم مشاهدة البث بعد موافقة صاحبه على التقاط الشاشة.</p></div><button id="refreshScreenBtn" class="secondary" type="button">تحديث</button></div>
       <div class="card">
         <h3>طلب مشاركة شاشة جهاز مرتبط</h3>
-        <p class="muted">لن يبدأ البث إلا بعد موافقة الطرف الآخر وتوصيل خدمة البث الفعلية.</p>
+        <p class="muted">لا يبدأ التقاط الشاشة إلا بعد موافقة صاحب الهاتف على نافذة أندرويد. يستخدم العرض اتصال WebRTC مباشرًا.</p>
         <form id="screenRequestForm" class="chat-form">
           <select id="screenTargetSelect" required aria-label="الحساب المرتبط"></select>
           <button id="screenRequestBtn" class="primary" type="submit">إرسال طلب</button>
@@ -94,11 +94,11 @@
       <div id="screenSessionList" class="device-list"></div>
       <div class="card screen-viewer-card" style="margin-top:14px">
         <div class="section-heading" style="margin-top:0">
-          <div><h2>عارض الشاشة</h2><p class="muted">مساحة العرض جاهزة للربط بعميل أندرويد بعد تنفيذ البث.</p></div>
+          <div><h2>عارض الشاشة</h2><p class="muted">عارض فيديو مباشر عبر WebRTC عند اتصال تطبيق أندرويد.</p></div>
           <span id="screenViewerStatus" class="screen-viewer-status" role="status">غير متصل</span>
         </div>
         <video id="screenVideo" class="screen-video" playsinline controls muted aria-label="عرض شاشة الجهاز"></video>
-        <p id="screenViewerMessage" class="muted screen-viewer-message">لا يوجد بث فيديو حاليًا. قبول الطلب وحده لا يبدأ التقاط الشاشة أو إرسالها؛ يجب أن يوافق صاحب الهاتف على نافذة مشاركة الشاشة في Android وأن يعمل عميل WebRTC.</p>
+        <p id="screenViewerMessage" class="muted screen-viewer-message">لا يوجد بث فيديو حاليًا. اطلب المشاركة، ثم وافق على التقاط الشاشة من الهاتف واضغط «مشاهدة الشاشة» هنا.</p>
       </div>
     </section>
 
