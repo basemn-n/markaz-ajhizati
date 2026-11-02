@@ -639,6 +639,26 @@ private fun MarkazApp(activity: MainActivity) {
         }
     }
 
+    fun stopScreenSession(item: ScreenSessionItem) {
+        val authToken = token ?: return
+        busy = true
+        network.execute {
+            try {
+                val result = requestApi("POST", "/api/screen-sessions/${item.id}/stop", authToken)
+                if (result.status !in 200..299) throw IllegalStateException(errorMessage(result))
+                activity.runOnUiThread {
+                    notice = "تم إيقاف جلسة مشاركة الشاشة وإبلاغ الطرف الآخر."
+                    busy = false
+                    refreshScreenSessions(authToken)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    notice = e.message ?: "تعذر إيقاف جلسة مشاركة الشاشة."
+                    busy = false
+                }
+            }
+        }
+    }
     fun generatePairingCode() {
         val authToken = token ?: return
         busy = true
@@ -1025,6 +1045,10 @@ private fun MarkazApp(activity: MainActivity) {
                                         "active" -> "نشطة"
                                         else -> item.status
                                     }, fontSize = 13.sp)
+                                    if (item.status == "accepted" || item.status == "active") {
+                                        OutlinedButton(onClick = { stopScreenSession(item) }, enabled = !busy,
+                                            modifier = Modifier.fillMaxWidth()) { Text("إيقاف الجلسة") }
+                                    }
                                 }
                             }
                         }
